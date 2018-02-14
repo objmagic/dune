@@ -472,7 +472,7 @@ module Gen(P : Params) = struct
 
   let library_rules (lib : Library.t) ~dir ~files
         ~(scope : Lib_db.Scope.t With_required_by.t) =
-    let obj_dir = Lib.lib_obj_dir dir lib in
+    let obj_dir = Utils.library_object_directory ~dir lib.name in
     let dep_kind = if lib.optional then Build.Optional else Required in
     let flags = Ocaml_flags.make lib.buildable sctx ~scope:scope.data ~dir in
     let { modules; main_module_name; alias_module } = modules_by_lib ~dir lib in
@@ -761,9 +761,7 @@ module Gen(P : Params) = struct
   let executables_rules (exes : Executables.t) ~dir ~all_modules
     ~(scope : Lib_db.Scope.t With_required_by.t) =
     let item = snd (List.hd exes.names) in
-    (* Use "eobjs" rather than "objs" to avoid a potential conflict with a library of the
-       same name *)
-    let obj_dir = Path.relative dir ("." ^ item ^ ".eobjs") in
+    let obj_dir = Utils.executable_object_directory ~dir item in
     let dep_kind = Build.Required in
     let flags = Ocaml_flags.make exes.buildable sctx ~scope:scope.data ~dir in
     let modules =
@@ -992,7 +990,7 @@ module Gen(P : Params) = struct
      +-----------------------------------------------------------------+ *)
 
   let lib_install_files ~dir ~sub_dir (lib : Library.t) =
-    let obj_dir = Lib.lib_obj_dir dir lib in
+    let obj_dir = Utils.library_object_directory ~dir lib.name in
     let make_entry section fn =
       Install.Entry.make section fn
         ?dst:(Option.map sub_dir ~f:(fun d -> sprintf "%s/%s" d (Path.basename fn)))
