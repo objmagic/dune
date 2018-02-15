@@ -11,14 +11,6 @@ module Info = struct
       | Complex of Jbuild.Lib_dep.t list
   end
 
-  module Install_status : sig
-    type t =
-      | Already_installed
-      | Ignore
-      | Should_install
-      | Install_if_dependencies_are_available
-  end
-
   type t =
     { loc              : Loc.t
     ; name             : string
@@ -33,7 +25,7 @@ module Info = struct
     ; jsoo_runtime     : string list
     ; requires         : Deps.t
     ; ppx_runtime_deps : string list
-    ; install_status   : Install_status.t
+    ; optional         : bool
     }
 
   let of_library_stanza ~dir (conf : Jbuild.Library.t) =
@@ -66,15 +58,6 @@ module Info = struct
       | Some l -> Simple l
       | None   -> Complex conf.libraries
     in
-    let install_status : Install_status.t =
-      match lib.public with
-      | None -> Ignore
-      | Some _ ->
-        if conf.optional then
-          Install_if_dependencies_are_available
-        else
-          Should_install
-    in
     { loc = conf.buildable.loc
     ; name
     ; other_names
@@ -84,6 +67,7 @@ module Info = struct
     ; synopsis = conf.synopsis
     ; archives = archive_files ~f:Mode.compiled_lib_ext
     ; plugins  = archive_files ~f:Mode.plugin_ext
+    ; optional = conf.optional
     ; stubs
     ; jsoo_runtime
     ; requires         = Complex conf.libraries
@@ -141,17 +125,17 @@ type t =
   ; archives         : Path.t list Mode.Dict.t
   ; plugins          : Path.t list Mode.Dict.t
   ; jsoo_runtime     : string list
-  ; requires         : (t list deps_result * Resolved_select.t list) Lazy.t
-  ; ppx_runtime_deps : t list deps_result Lazy.t
+  ; requires         : (t list or_error * Resolved_select.t list) Lazy.t
+  ; ppx_runtime_deps : t list or_error Lazy.t
   ; install_status   : Info.Install_status.t
   ; db               : t
   }
 
 type db =
   { parent        : db option
-  ; resolve       : string -> (Info.t, string) result
-  ; resolve_cache : (string, (t, Error0.Library_not_available.t) result)
-                      Hashtbl.t
+  ; resolve       :
+      string -> (Info.t, Error.Library_not_available.Reason.t) result
+  ; resolve_cache : (string, t or_error) Hashtbl.t
   ; all           : string list Lazy.t
   }
 
@@ -166,7 +150,7 @@ and conflict =
   ; lib2 : t * With_required_by.Entry.t list
   }
 
-and 'a deps_result = ('a, error) result
+and 'a or_error = ('a, error) result
 
 module Error = struct
   include Error0
@@ -200,15 +184,6 @@ let obj_dir t = t.obj_dir
 let src_or_obj_dir t = Option.value t.src_dir ~default:t.obj_dir
 
 let is_local t = Path.is_local t.obj_dir
-
-let should_install t =
-  match t.install_status with
-  | Already_installed | Ignore -> false
-  | Should_Install -> true
-  | Install_if_dependencies_are_available ->
-    match fst (Lazy.force t.requires) with
-    | Ok    _ -> true
-    | Error _ -> false
 
 module List = struct
   type nonrec t = t list
@@ -273,6 +248,12 @@ let gen_unique_id =
     next := n + 1;
     n
 
+(* Special marker to detect dependencies when resolving optional
+   libraries.
+
+   Normally, we don't resolve the dependencies eagerly. However, *)
+let marker = Dependency_cycle []
+
 let rec make db (info : Info.t) : t =
   { loc              = info.loc
   ; name             = info.loc
@@ -297,22 +278,38 @@ and find db name =
     match db.resolve name with
     | Ok info ->
       let t = make db info in
-      let res = Ok t in
+      let res =
+        if not info.optional then begin
+          Ok t
+        else begin
+          match fst (Lazy.force t.requires) with
+          | Ok _ -> Ok t
+          | Error _ ->
+            let msg =
+              "ignored as optional and some dependencies \
+               are not available"
+            in
+            Error { name; reason = Hidden msg }
+        end
+      in
       List.iter (names t) ~f:(fun name ->
         Hashtbl.add t.resolve_cache ~key:name ~data:res);
       res
-    | Error na as res ->
+    | Error reason ->
+      let res =
+        Error (Library_not_available { name; reason = reason })
+      in
       let res =
         match db.parent with
         | None -> res
         | Some db ->
-          let res' = find db name in
-          match res' with
-          | Ok _ -> res'
-          | Error _ ->
-            match na.reason with
-            | Hidden _ -> res
-            | Not_found -> res'
+          match find db name with
+          | Ok _ as res' -> res'
+          | Error reason' ->
+            if reason = Not_found then
+              Error (Library_not_available na')
+            else
+              res
       in
       Hashtbl.add t.resolve_cache ~key:name ~data:res;
       res
@@ -393,7 +390,7 @@ and resolve_deps db deps =
   | Simple  names -> (resolve_simple_deps  db names, [])
   | Complex names -> (resolve_complex_deps db names, [])
 
-let deps_exn (deps : _ deps_result) ~required_by =
+let deps_exn deps ~required_by =
   match deps with
   | Ok x -> x
   | Error e ->

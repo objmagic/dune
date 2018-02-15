@@ -27,11 +27,6 @@ val obj_dir : t -> Path.t
 (** Same as [Path.is_local (obj_dir t)] *)
 val is_local : t -> bool
 
-(** For local libraries, whether the library should be installed or
-    not. For instance optional libraries that have unavailable
-    dependencies shouldn't be installed. *)
-val should_install : t -> bool
-
 module Resolved_select = struct
   module No_solution_found : sig
     type t =
@@ -80,14 +75,6 @@ module Info : sig
       | Complex of Jbuild.Lib_dep.t list
   end
 
-  module Install_status : sig
-    type t =
-      | Already_installed (** For external libraries *)
-      | Ignore
-      | Should_install
-      | Install_if_dependencies_are_available
-  end
-
   (** Raw description of a library, where dependencies are not
       resolved. *)
   type t =
@@ -104,7 +91,7 @@ module Info : sig
     ; jsoo_runtime     : string list
     ; requires         : Deps.t
     ; ppx_runtime_deps : string list
-    ; install_status   : Install_status.t
+    ; optional         : bool
     }
 
   (** Construct a [t] from a library stanza. *)
@@ -154,9 +141,7 @@ module DB : sig
   type t
 
   (** Create a new library database. [resolve] is used to resolve
-      library names in this database. If a library is not found, it
-      must return [Error reason] where [reason] explains why the
-      library is missing, for instance "not found".
+      library names in this database.
 
       When a library is not found, it is looked up in the parent
       database if any.
@@ -165,7 +150,7 @@ module DB : sig
   *)
   val create
     :  ?parent:t
-    -> resolve:(string -> (Info.t, string) result)
+    -> resolve:(string -> (Info.t, Error.Library_not_available.Reason.t) result)
     -> all:(unit -> string list)
     -> unit
     -> t
@@ -179,7 +164,7 @@ module DB : sig
   val find
     :  t
     -> string
-    -> (lib, Error.Library_not_available.t) result
+    -> (lib, Error.Library_not_available.Reason.t) result
   val find_exn
     :  t
     -> string
