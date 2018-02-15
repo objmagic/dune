@@ -251,8 +251,10 @@ let gen_unique_id =
 (* Special marker to detect dependencies when resolving optional
    libraries.
 
-   Normally, we don't resolve the dependencies eagerly. However, *)
-let marker = Dependency_cycle []
+   If we see this marker in the resolve cache, we know that we have a
+   dependency cycle. *)
+let loop_marker = Dependency_cycle []
+exception Cycle_detected_while_deciding_optional_library_state
 
 let rec make db (info : Info.t) : t =
   { loc              = info.loc
@@ -273,6 +275,8 @@ let rec make db (info : Info.t) : t =
 
 and find db name =
   match Hashtbl.find db.resolve_cache name with
+  | Some (Dependency_cycle []) ->
+    raise_notrace Cycle_detected_while_deciding_optional_library_state
   | Some x -> x
   | None ->
     match db.resolve name with
@@ -282,6 +286,7 @@ and find db name =
         if not info.optional then begin
           Ok t
         else begin
+          Hashtbl.add t.resolve_cache ~key:name ~data:loop_marker;
           match fst (Lazy.force t.requires) with
           | Ok _ -> Ok t
           | Error _ ->
@@ -290,9 +295,22 @@ and find db name =
                are not available"
             in
             Error { name; reason = Hidden msg }
+          | exception Cycle_detected_while_deciding_optional_library_state ->
+            let msg =
+              (* CR-someday diml: improve this error *)
+              "ignored as optional and a cycle was detected"
+            in
+            Error { name; reason = Hidden msg }
         end
       in
-      List.iter (names t) ~f:(fun name ->
+      let names = names t in
+      if not (List.mem name ~set:names) then
+        Sexp.code_error
+          "Lib_db.DB.find: resolver result didn't include requested name"
+          [ "requested_name", Sexp.To_sexp.string name
+          ; "returned_names", Sexp.To_sexp.(list string) name
+          ];
+      List.iter names ~f:(fun name ->
         Hashtbl.add t.resolve_cache ~key:name ~data:res);
       res
     | Error reason ->
