@@ -15,7 +15,8 @@ module Info = struct
     { loc              : Loc.t
     ; name             : string
     ; other_names      : string list
-    ; src_dir          : Path.t option
+    ; kind             : Jbuild.Library.Kind.t
+    ; src_dir          : Path.t
     ; obj_dir          : Path.t
     ; version          : string option
     ; synopsis         : string option
@@ -25,6 +26,7 @@ module Info = struct
     ; jsoo_runtime     : string list
     ; requires         : Deps.t
     ; ppx_runtime_deps : string list
+    ; ppx_used         : string list
     ; optional         : bool
     }
 
@@ -61,6 +63,7 @@ module Info = struct
     { loc = conf.buildable.loc
     ; name
     ; other_names
+    ; kind     = conf.kind
     ; src_dir  = dir
     ; obj_dir  = Utils.library_object_directory ~dir conf.name
     ; version  = None
@@ -113,36 +116,49 @@ module Resolved_select = struct
     }
 end
 
+module Init = struct
+  type t =
+    { unique_id : int
+    ; path      : Path.t
+    ; name      : string
+    }
+end
+
 type t =
   { loc              : Loc.t
   ; name             : string
   ; other_names      : string list
   ; unique_id        : int
-  ; src_dir          : Path.t option
+  ; kind             : Jbuild.Library.Kind.t
+  ; src_dir          : Path.t
   ; obj_dir          : Path.t
   ; version          : string option
   ; synopsis         : string option
   ; archives         : Path.t list Mode.Dict.t
   ; plugins          : Path.t list Mode.Dict.t
   ; jsoo_runtime     : string list
-  ; requires         : (t list or_error * Resolved_select.t list) Lazy.t
-  ; ppx_runtime_deps : t list or_error Lazy.t
+  ; requires         : t list or_error * Resolved_select.t list
+  ; ppx_runtime_deps : t list or_error
   ; install_status   : Info.Install_status.t
   ; db               : t
   }
 
 type db =
-  { parent        : db option
-  ; resolve       :
-      string -> (Info.t, Error.Library_not_available.Reason.t) result
-  ; resolve_cache : (string, t or_error) Hashtbl.t
-  ; all           : string list Lazy.t
+  { parent  : db option
+  ; resolve : string -> (Info.t, Error.Library_not_available.Reason.t) result
+  ; table   : (string, resolve_status) Hashtbl.t
+  ; all     : string list Lazy.t
   }
+
+and resolve_status =
+  | Resolved     of t
+  | Initializing of Init.t
+  | Failed       of error
 
 and error =
   | Library_not_available        of Library_not_available.t
   | No_solution_found_for_select of No_solution_found_for_select.t
-  | Dependency_cycle             of t list
+  | Dependency_cycle             of (Path.t * string) list
   | Conflict                     of conflict
 
 and conflict =
@@ -173,15 +189,19 @@ end
    | Generals                                                        |
    +-----------------------------------------------------------------+ *)
 
-let name t = t.name
+let name  t = t.name
 let names t = t.name :: t.other_names
 
 let unique_id t = t.unique_id
 
+let kind         t = t.kind
+let synopsis     t = t.synopsis
+let archives     t = t.archives
+let plugins      t = t.plugins
+let jsoo_runtime t = t.jsoo_runtime
+
 let src_dir t = t.src_dir
 let obj_dir t = t.obj_dir
-
-let src_or_obj_dir t = Option.value t.src_dir ~default:t.obj_dir
 
 let is_local t = Path.is_local t.obj_dir
 
@@ -201,7 +221,7 @@ module List = struct
   let c_include_flags ts ~stdlib_dir =
     let dirs =
       List.fold_left ts ~init:Path.Set.empty ~f:(fun acc t ->
-        Path.Set.add (src_or_obj_dir t) acc)
+        Path.Set.add t.src_dir acc)
       |> Path.Set.remove stdlib_dir
     in
     Arg_spec.S (List.concat_map (Path.Set.elements dirs) ~f:(fun dir ->
@@ -256,11 +276,57 @@ let gen_unique_id =
 let loop_marker = Dependency_cycle []
 exception Cycle_detected_while_deciding_optional_library_state
 
-let rec make db (info : Info.t) : t =
+module Dep_stack = struct
+  type t =
+    { stack : Init.t list
+    ; seen  : Int_set.t
+    }
+
+  let empty =
+    { stack = []
+    ; seen  = Int_set.empty
+    }
+
+  let dependency_cycle (last_id, last_path, last_name) dep_path =
+    let rec build_loop acc stack =
+      match stack with
+      | [] -> assert false
+      | (id, path, name) :: stack ->
+        let acc = (path, name) :: acc in
+        if id = last_id then
+          acc
+        else
+          build_loop acc stack
+    in
+    let loop = build_loop [(last_path, last_name)] dep_path in
+    raise (Dependency_cycle loop)
+
+  let push t (x : Init.t) =
+    let (id, _, _) = x in
+    if Int_set.mem id t.seen then dependency_cycle x t.stack;
+    let stack = x :: t.stack in
+    { stack = x :: t.stack
+    ; seen  = Int_set.add id t.seen
+    }
+end
+
+let rec make db init (info : Info.t) : t =
+  let requires = lazy (
+    let deps, resolved_select = resolve_deps db info.requires ~stack in
+    let deps =
+      match deps with
+      | Error _ -> deps
+      | Ok deps ->
+        let ppx_used = resolve_simple_deps db info.ppx_used in
+        let 
+    in
+    (deps, resolved_select)
+  in
   { loc              = info.loc
   ; name             = info.loc
   ; other_names      = info.other_names
   ; unique_id        = gen_unique_id ()
+  ; kind             = info.kind
   ; src_dir          = info.src_dir
   ; obj_dir          = info.obj_dir
   ; version          = info.version
@@ -268,8 +334,8 @@ let rec make db (info : Info.t) : t =
   ; archives         = info.archives
   ; plugins          = info.plugins
   ; jsoo_runtime     = info.jsoo_runtime
-  ; requires         = lazy (resolve_deps db (Complex info.requires))
-  ; ppx_runtime_deps = lazy (resolve_simple_deps db info.ppx_runtime_deps)
+  ; requires         = Inl { info = requires
+  ; ppx_runtime_deps = resolve_simple_deps db info.ppx_runtime_deps
   ; db               = db
   }
 
@@ -281,6 +347,11 @@ and find db name =
   | None ->
     match db.resolve name with
     | Ok info ->
+      let init =
+        { Init.
+          unique_id = gen_unique_id ()
+        ; path      = Option.value info.src_dir ~default:info.obj_dir
+        ; 
       let t = make db info in
       let res =
         if not info.optional then begin
@@ -544,7 +615,6 @@ let closed_ppx_runtime_deps_of ts ~cache ~required_by =
   closure ts ~cache ~required_by
   |> List.concat_map ~f:(ppx_runtime_deps ~required_by)
   |> closure ~cache ~required_by
-
 
 (* let describe = function
  *   | Internal (_, lib) ->

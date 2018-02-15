@@ -19,13 +19,19 @@ val unique_id : t -> int
 (* CR-someday diml: this should be [Path.t list], since some libraries
    have multiple source directories because of [copy_files]. *)
 (** Directory where the source files for the library are located. *)
-val src_dir : t -> Path.t option
+val src_dir : t -> Path.t
 
 (** Directory where the object files for the library are located. *)
 val obj_dir : t -> Path.t
 
 (** Same as [Path.is_local (obj_dir t)] *)
 val is_local : t -> bool
+
+val synopsis     : t -> string option
+val kind         : t -> Jbuild.Library.Kind.t
+val archives     : t -> Path.t list Mode.Dict.t
+val plugins      : t -> Path.t list Mode.Dict.t
+val jsoo_runtime : t -> string list
 
 module Resolved_select = struct
   module No_solution_found : sig
@@ -81,7 +87,8 @@ module Info : sig
     { loc              : Loc.t
     ; name             : string
     ; other_names      : string list
-    ; src_dir          : Path.t option
+    ; kind             : Jbuild.Library.Kind.t
+    ; src_dir          : Path.t
     ; obj_dir          : Path.t
     ; version          : string option
     ; synopsis         : string option
@@ -91,6 +98,7 @@ module Info : sig
     ; jsoo_runtime     : string list
     ; requires         : Deps.t
     ; ppx_runtime_deps : string list
+    ; ppx_used         : string list
     ; optional         : bool
     }
 
@@ -127,7 +135,7 @@ module Error : sig
   type t =
     | Library_not_available        of Library_not_available.t
     | No_solution_found_for_select of No_solution_found_for_select.t
-    | Dependency_cycle             of t list
+    | Dependency_cycle             of (Path.t * string) list
     | Conflict                     of Conflict.t
 end
 

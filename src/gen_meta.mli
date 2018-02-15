@@ -4,7 +4,8 @@ open! Import
 
 val gen
   :  package:string
-  -> scope:Lib_db.Scope.t
   -> version:string option
-  -> stanzas:(Path.t * Jbuild.Stanza.t) list
+  -> closure_cache:Lib.Closure_cache.t
+  -> meta_path:Path.t
+  -> Lib.t list
   -> Meta.t
