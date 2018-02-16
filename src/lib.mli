@@ -53,11 +53,7 @@ val jsoo_archives : t -> Path.t list
 
 module Error : sig
   module Library_not_available : sig
-    module Reason : sig
-      type t =
-        | Not_found
-        | Hidden of string
-    end
+    module Reason = Findlib.Unavailable_reason
 
     type nonrec t =
       { name   : string
@@ -140,8 +136,8 @@ module Info : sig
     ; optional         : bool
     }
 
-  (** Construct a [t] from a library stanza. *)
   val of_library_stanza : dir:Path.t -> Jbuild.Library.t -> t
+  val of_findlib_package : Findlib.Package.t -> t
 end
 
 (** Collection of libraries organized by names *)
@@ -185,6 +181,8 @@ module DB : sig
     -> ?parent:t
     -> (Path.t * Jbuild.Library.t) list
     -> t
+
+  val create_from_findlib : Findlib.t -> t
 
   val find : t -> string -> lib option
   val find_exn

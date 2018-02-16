@@ -113,12 +113,41 @@ module Config = struct
 end
 
 module Package = struct
-  include Lib.Info
+  type t =
+    { meta_file : Path.t
+    ; name      : string
+    ; dir       : Path.t
+    ; vars      : Vars.t
+    }
 
-  let name        t = t.name
-  let dir         t = t.dir
-  let version     t = t.version
-  let description t = t.synopsis
+  let meta_file t = t.meta_file
+  let name      t = t.name
+  let dir       t = t.dir
+
+  let preds = Ps.of_list [P.ppx_driver; P.mt; P.mt_posix]
+
+  let archives t var preds =
+    Mode.Dict.of_func (fun ~mode ->
+      List.map (Vars.get_words t.vars var (Ps.add (Mode.variant mode) preds))
+        ~f:(Path.relative t.dir))
+
+  let version          t = Vars.get       t.vars "version"          Ps.empty
+  let description      t = Vars.get       t.vars "description"      Ps.empty
+  let jsoo_runtime     t = Vars.get_words t.vars "jsoo_runtime"     Ps.empty
+  let requires         t = Vars.get_words t.vars "requires"         preds
+  let ppx_runtime_deps t = Vars.get_words t.vars "ppx_runtime_deps" preds
+
+  let archives t = archives t "archive" preds
+  let plugins t =
+    Mode.Dict.map2 ~f:(@)
+      (archives t "archive" (Ps.add Variant.plugin preds))
+      (archives t "plugin" preds)
+end
+
+module Unavailable_reason = struct
+  type t =
+    | Not_found
+    | Hidden of string
 end
 
 type t =
@@ -126,7 +155,7 @@ type t =
   ; path          : Path.t list
   ; builtins      : Meta.t String_map.t
   ; packages      : (string,
-                     (Package.t, Lib.Error.Library_not_available.t) result)
+                     (Package.t, Unavailable_reason.t) result)
                       Hashtbl.t
   ; db            : Lib.DB.t Lazy.t
   }
@@ -139,7 +168,7 @@ let root_package_name s =
   | Some i -> String.sub s ~pos:0 ~len:i
 
 (* Parse a single package from a META file *)
-let parse_package t ~name ~parent_dir ~vars =
+let parse_package t ~meta_file ~name ~parent_dir ~vars =
   let pkg_dir = Vars.get vars "directory" Ps.empty in
   let dir =
     if pkg_dir = "" then
@@ -152,52 +181,33 @@ let parse_package t ~name ~parent_dir ~vars =
     else
       Path.absolute pkg_dir
   in
-  let archives var preds =
-    Mode.Dict.of_func (fun ~mode ->
-      List.map (Vars.get_words vars var (Ps.add (Mode.variant mode) preds))
-        ~f:(Path.relative dir))
-  in
   let exists_if = Vars.get_words vars "exists_if" Ps.empty in
   let exists =
     List.for_all exists_if ~f:(fun fn ->
       Path.exists (Path.relative dir fn))
   in
-  (dir,
-   if exists then
-     let jsoo_runtime = Vars.get_words vars "jsoo_runtime" Ps.empty in
-     let preds = Ps.of_list [P.ppx_driver; P.mt; P.mt_posix] in
-     let requires         = Vars.get_words vars "requires"         preds in
-     let ppx_runtime_deps = Vars.get_words vars "ppx_runtime_deps" preds in
-     Ok
-       { Package.
-         name
-       ; other_names = []
-       ; dir
-       ; version     = Vars.get vars "version" Ps.empty
-       ; description = Vars.get vars "description" Ps.empty
-       ; archives    = archives "archive" preds
-       ; jsoo_runtime
-       ; plugins     = Mode.Dict.map2 ~f:(@)
-                         (archives "archive" (Ps.add Variant.plugin preds))
-                         (archives "plugin" preds)
-       ; requires         = Simple requires
-       ; ppx_runtime_deps = ppx_runtime_deps
-       ; install_status = Already_installed
-       }
-   else
-     Error
-       { Lib.Error.Library_not_available.
-         name
-       ; reason = Hidden "hidden (unsatisfied 'exist_if')"
-       })
+  let res =
+    if exists then
+      Ok { Package.
+           meta_file
+         ; name
+         ; dir
+         ; vars
+         }
+    else
+      Error (Unavailable_reason.Hidden "hidden (unsatisfied 'exist_if')")
+  in
+  (dir, res)
 
 (* Parse all the packages defined in a META file and add them to
    [t.packages] *)
-let parse_and_acknowledge_meta t ~dir (meta : Meta.t) =
+let parse_and_acknowledge_meta t ~dir ~meta_file (meta : Meta.t) =
   let rec loop ~dir ~full_name (meta : Meta.Simplified.t) =
     let vars = String_map.map meta.vars ~f:Rules.of_meta_rules in
-    let dir, pkg = parse_package t ~name:full_name ~parent_dir:dir ~vars in
-    Hashtbl.add t.packages ~key:full_name ~data:pkg;
+    let dir, res =
+      parse_package t ~meta_file ~name:full_name ~parent_dir:dir ~vars
+    in
+    Hashtbl.add t.packages ~key:full_name ~data:res;
     List.iter meta.subs ~f:(fun (meta : Meta.Simplified.t) ->
       loop ~dir ~full_name:(sprintf "%s.%s" full_name meta.name) meta)
   in
@@ -214,6 +224,7 @@ let find_and_acknowledge_meta t ~fq_name =
       let fn = Path.relative sub_dir "META" in
       if Path.exists fn then
         Some (sub_dir,
+              fn,
               { name    = root_name
               ; entries = Meta.load (Path.to_string fn)
               })
@@ -222,6 +233,7 @@ let find_and_acknowledge_meta t ~fq_name =
         let fn = Path.relative dir ("META." ^ root_name) in
         if Path.exists fn then
           Some (dir,
+                fn,
                 { name    = root_name
                 ; entries = Meta.load (Path.to_string fn)
                 })
@@ -239,9 +251,10 @@ let find_and_acknowledge_meta t ~fq_name =
                    ; reason      = Not_found
                    ; required_by = []
                    })
-  | Some (dir, meta) -> parse_and_acknowledge_meta t meta ~dir
+  | Some (dir, meta_file, meta) ->
+    parse_and_acknowledge_meta t meta ~meta_file ~dir
 
-let resolve t name =
+let find t name =
   match Hashtbl.find t.packages name with
   | Some x -> x
   | None ->
@@ -249,13 +262,7 @@ let resolve t name =
     match Hashtbl.find t.packages name with
     | Some x -> x
     | None ->
-      let res : _ or_not_available =
-        Error
-          { package     = name
-          ; required_by = []
-          ; reason      = Not_found
-          }
-      in
+      let res = Error Unavailable_reason.Not_found in
       Hashtbl.add t.packages ~key:name ~data:res;
       res
 
@@ -299,15 +306,17 @@ let create ~stdlib_dir ~path =
     ; builtins = Meta.builtins ~stdlib_dir
     ; db = lazy (create_db t)
     }
+  in
+  t
 
 let all_unavailable_packages t =
   load_all_packages t;
-  Hashtbl.fold t.packages ~init:[] ~f:(fun ~key:_ ~data acc ->
+  Hashtbl.fold t.packages ~init:[] ~f:(fun ~key:name ~data acc ->
     match data with
     | Ok    _ -> acc
-    | Error n -> n :: acc)
-  |> List.sort ~cmp:(fun (a : Lib.Error.Library_not_available.t) b ->
-    String.compare a.package b.package)
+    | Error e -> ((name, e) :: acc)
+  |> List.sort ~cmp:(fun (a, _) (b, _) ->
+    String.compare a b)
 
 let stdlib_with_archives t =
   let x = find_exn t ~required_by:[] "stdlib" in

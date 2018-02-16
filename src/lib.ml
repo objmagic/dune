@@ -78,6 +78,26 @@ module Info = struct
     ; pps = Jbuild.Preprocess_map.pps conf.buildable.preprocess
     ; when_to_install
     }
+
+  let of_findlib_package pkg =
+    let module P = Findlib.Package in
+    { loc              = Loc.in_file (Path.to_string (P.meta_file pkg))
+    ; name             = P.name pkg
+    ; other_names      = []
+    ; kind             = Normal
+    ; src_dir          = P.dir pkg
+    ; obj_dir          = P.dir pkg
+    ; version          = P.version pkg
+    ; synopsis         = P.description pkg
+    ; archives         = P.archives pkg
+    ; plugins          = P.plugins pkg
+    ; stubs            = None
+    ; jsoo_runtime     = P.jsoo_runtime pkg
+    ; requires         = Simple (P.requires pkg)
+    ; ppx_runtime_deps = P.ppx_runtime_deps pkg
+    ; pps              = []
+    ; optional         = false
+    }
 end
 
 (* +-----------------------------------------------------------------+
@@ -86,11 +106,7 @@ end
 
 module Error0 = struct
   module Library_not_available = struct
-    module Reason = struct: sig
-      type t =
-        | Not_found
-        | Hidden of string
-    end
+    module Reason = Findlib.Unavailable_reason
 
     type nonrec t =
       { name   : string
@@ -118,7 +134,7 @@ module Init = struct
     }
 end
 
-module DB_kind : sig
+module DB_kind = struct
   type t =
     | Installed
     | Public
@@ -643,6 +659,17 @@ module DB = struct
         | None -> Error "not found"
         | Some info -> Ok info)
       ~all:(fun () -> String_map.keys map)
+
+  let create_from_findlib findlib =
+    create ()
+      ~kind:Installed
+      ~resolve:(fun name ->
+        match Findlib.find findlib name with
+        | Ok pkg -> Ok (Info.of_findlib_package pkg)
+        | Error _ as res -> res)
+      ~all:(fun () ->
+        Findlib.all_packages findlib
+        |> List.map ~f:Findlib.Package.name)
 
   let find t name =
     match find_internal t name ~stack:Dep_stack.empty with

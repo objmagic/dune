@@ -76,7 +76,7 @@ let create
       ~filter_out_optional_stanzas_with_missing_deps
       ~build_system
   =
-  let installed_libs = Findlib.db context.findlib in
+  let installed_libs = Lib.DB.create_from_findlib context.findlib in
   let public_libs, private_lins =
     List.concat_map stanzas ~f:(fun (dir, _, stanzas) ->
       let ctx_dir = Path.append context.build_dir dir in

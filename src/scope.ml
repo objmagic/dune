@@ -78,7 +78,7 @@ module DB = struct
               ~parent:public_libs
               ~unique_name_suffix:info.name
           in
-          { info; db }
+          { info; db })
     in
     let by_dir = Hashtbl.create 1024 in
     Scope_name_map.iter by_name ~f:(fun name scope ->
