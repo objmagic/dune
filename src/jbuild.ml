@@ -73,8 +73,14 @@ let relative_file sexp =
   fn
 
 module Scope_info = struct
+  module Name = struct
+    type t = string option
+
+    let compare : t -> t -> int = compare
+  end
+
   type t =
-    { name     : string option
+    { name     : Name.t
     ; packages : Package.t String_map.t
     ; root     : Path.t
     }
@@ -561,6 +567,7 @@ module Library = struct
     ; optional                 : bool
     ; buildable                : Buildable.t
     ; dynlink                  : bool
+    ; scope_name               : Scope_info.Name.t
     }
 
   let v1 pkgs =
@@ -604,7 +611,7 @@ module Library = struct
          ; optional
          ; buildable
          ; dynlink = not no_dynlink
-         ; scope   = pkgs
+         ; scope_name = pkgs.name
          })
 
   let has_stubs t =

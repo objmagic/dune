@@ -10,6 +10,13 @@ module Jbuild_version : sig
 end
 
 module Scope_info : sig
+  module Name : sig
+    (** [None] is the for the {!anonymous} scope *)
+    type t = string option
+
+    val compare : t -> t -> int
+  end
+
   type t =
     { name     : string option (** First package name in alphabetical
                                    order. [None] for the global
@@ -172,7 +179,7 @@ module Library : sig
     ; optional                 : bool
     ; buildable                : Buildable.t
     ; dynlink                  : bool
-    ; scope                    : Scope_info.t
+    ; scope_name               : Scope_info.Name.t
     }
 
   val has_stubs : t -> bool

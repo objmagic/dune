@@ -37,7 +37,7 @@ module Info = struct
     ; jsoo_runtime     : string list
     ; requires         : Deps.t
     ; ppx_runtime_deps : string list
-    ; pps              : string list
+    ; pps              : Jbuild.Pp.t list
     ; optional         : bool
     }
 
@@ -75,6 +75,7 @@ module Info = struct
     ; jsoo_runtime
     ; requires         = Deps.of_lib_deps conf.libraries
     ; ppx_runtime_deps = conf.ppx_runtime_libraries
+    ; pps = Jbuild.Preprocess_map.pps conf.buildable.preprocess
     ; when_to_install
     }
 end
@@ -492,9 +493,10 @@ and resolve_deps db deps ~stack =
 and resolve_user_deps db deps ~pps ~stack =
   let deps, resolved_select = resolve_deps db deps ~stack ~stack in
   let deps =
-    match info.pps with
+    match pps with
     | [] -> deps
     | pps ->
+      let pps = List.map pps ~f:Jbuild.Pp.to_string in
       deps >>= fun deps ->
       resolve_simple_deps db pps ~stack >>= fun pps ->
       fold_closure pps ~stack ~init:deps ~f:(fun t acc ->

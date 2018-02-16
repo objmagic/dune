@@ -14,7 +14,7 @@ module Dir_with_jbuild : sig
     { src_dir : Path.t
     ; ctx_dir : Path.t (** [_build/context-name/src_dir] *)
     ; stanzas : Stanzas.t
-    ; scope   : Lib_db.Scope.t With_required_by.t
+    ; scope   : Scope.t With_required_by.t
     }
 end
 
@@ -26,7 +26,7 @@ val create
   -> scopes:Scope.t list
   -> file_tree:File_tree.t
   -> packages:Package.t String_map.t
-  -> stanzas:(Path.t * Scope.t * Stanzas.t) list
+  -> stanzas:(Path.t * Scope_info.t * Stanzas.t) list
   -> filter_out_optional_stanzas_with_missing_deps:bool
   -> build_system:Build_system.t
   -> t
@@ -44,6 +44,9 @@ val public_libs : t -> Lib.DB.t
 
 (** Installed libraries that are not part of the workspace *)
 val installed_libs : t -> Lib.DB.t
+
+val find_scope_by_dir  : t -> Path.t        -> Scope.t
+val find_scope_by_name : t -> string option -> Scope.t
 
 val expand_vars : t -> scope:Lib_db.Scope.t -> dir:Path.t -> String_with_vars.t -> string
 
@@ -101,16 +104,25 @@ val resolve_program
   -> string
   -> Action.Prog.t
 
-(** Unique name, even for internal libraries *)
-val unique_library_name : t -> Lib.t -> string
-
 module Libs : sig
-  val with_resolved_deps
-    :  (Lib.t list, Lib.Error.t With_required_by.t) result
-    -> Lib.Resolved_select.t list
-    -> gen_dot_merlin:bool
-    -> f:(Lib.t list -> 'a)
-    -> 'a
+  (** Returns the closed list of dependencies for a dependency list in
+      a stanza. The second arrow is the same as the first one but with
+      an added dependency on the [.merlin] if [(context t).merlin &&
+      lib.buildable.gen_dot_merlin] is [true]. *)
+  val requires_for_library
+    :  t
+    -> dir:Path.t
+    -> scope:Scope.t With_required_by.t
+    -> dep_kind:Build.lib_dep_kind
+    -> Jbuild.Library.t
+    -> (unit, Lib.List.t) Build.t * (unit, Lib.List.t) Build.t
+  val requires_for_executables
+    :  t
+    -> dir:Path.t
+    -> scope:Scope.t With_required_by.t
+    -> dep_kind:Build.lib_dep_kind
+    -> Jbuild.Executables.t
+    -> (unit, Lib.List.t) Build.t * (unit, Lib.List.t) Build.t
 
   (** [file_deps ~ext] is an arrow that record dependencies on all the files with
       extension [ext] of the libraries given as input. *)
@@ -119,14 +131,24 @@ module Libs : sig
   (** Same as [file_deps] but for a single known library *)
   val static_file_deps : ext:string -> Lib.Internal.t -> ('a, 'a) Build.t
 
-  (** Setup the alias that depends on all files with a given extension for a library *)
-  val setup_file_deps_alias : t -> Lib.Internal.t -> ext:string -> Path.t list -> unit
+  (** Setup the alias that depends on all files with a given extension
+      for a library *)
+  val setup_file_deps_alias
+    :  t
+    -> Lib.Internal.t
+    -> ext:string
+    -> Path.t list
+    -> unit
 
   (** Setup an alias that depend on all files with the given extensions.
 
       To depend on this alias, use [~ext:"ext1-and-ext2-...-extn"]
   *)
-  val setup_file_deps_group_alias : t -> Lib.Internal.t -> exts:string list -> unit
+  val setup_file_deps_group_alias
+    :  t
+    -> Lib.Internal.t
+    -> exts:string list
+    -> unit
 end
 
 (** Interpret dependencies written in jbuild files *)

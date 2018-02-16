@@ -136,7 +136,7 @@ module Info : sig
     ; jsoo_runtime     : string list
     ; requires         : Deps.t
     ; ppx_runtime_deps : string list
-    ; pps              : string list
+    ; pps              : Jbuild.Pp.t list
     ; optional         : bool
     }
 
@@ -203,7 +203,7 @@ module DB : sig
   val resolve_user_written_deps
     :  t
     -> Jbuild.Lib_dep.t list
-    -> pps:string list
+    -> pps:Jbuild.Pp.t list
     -> (List.t, Error.t With_required_by.t) result * Resolved_select.t list
 
   (** Return the list of all libraries in this database. If

@@ -11,21 +11,13 @@ let name = t.info.name
 module DB = struct
   type scope = t
 
-  module Scope_name_map = Map.Make(struct
-      type t = string option
-      let compare : t -> t -> int = compare
-    end)
+  module Scope_name_map = Map.Make(Jbuild.Scope_info.Name)
 
   type t =
     { by_dir  : (Path.t, scope) Hashtbl.t
     ; by_name : scope Scope_name_map.t
-    ; root    : Path.t
+    ; context : string
     }
-
-  module Sopt_map = Map.Make(struct
-      type t = string option
-      let compare : t -> t -> int = compare
-    end)
 
   let find_by_dir t dir =
     let rec loop d =
@@ -34,8 +26,8 @@ module DB = struct
       | None ->
         if Path.is_root d || not (Path.is_local d) then
           Sexp.code_error "Scope.DB.find_by_dir got an invalid path"
-            [ "dir"   , Path.sexp_of_t dir
-            ; "t.root", Path.sexp_of_t t.anonymous_root
+            [ "dir"    , Path.sexp_of_t dir
+            ; "context", Sexp.To_sexp.string t.context
             ];
         let scope = loop (Path.parent d) in
         Hashtbl.add t.by_dir ~key:d ~data:scope;
@@ -48,11 +40,11 @@ module DB = struct
     | Some x -> x
     | None ->
       Sexp.code_error "Scope.DB.find_by_name"
-        [ "name", name
-        ; "root", t.root
+        [ "name"   , Sexp.To_sexp.string name
+        ; "context", Sexp.To_sexp.string t.context
         ]
 
-  let create findlib ~scopes ~root ~public_libs private_libs =
+  let create findlib ~scopes ~context ~public_libs private_libs =
     let scopes_info_by_name =
       List.map scopes ~f:(fun (scope : Jbuild.Scope_info.t) ->
         (scope.name, scope))
@@ -91,5 +83,5 @@ module DB = struct
     let by_dir = Hashtbl.create 1024 in
     Scope_name_map.iter by_name ~f:(fun name scope ->
       Hashtbl.add by_dir ~key:scope.info.root scope);
-    { by_name; by_dir; root }
+    { by_name; by_dir; context }
 end

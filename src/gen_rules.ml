@@ -517,11 +517,7 @@ module Gen(P : Params) = struct
          >>> Build.write_file_dyn (Path.relative dir file.name)));
 
     let requires, real_requires =
-      SC.Libs.requires sctx ~dir ~scope ~dep_kind ~item:lib.name
-        ~libraries:lib.buildable.libraries
-        ~preprocess:lib.buildable.preprocess
-        ~virtual_deps:lib.virtual_deps
-        ~has_dot_merlin:lib.buildable.gen_dot_merlin
+      SC.Libs.requires_for_library sctx ~dir ~scope ~dep_kind lib
     in
 
     SC.Libs.setup_runtime_deps sctx ~dir ~scope ~dep_kind ~item:lib.name
@@ -796,11 +792,7 @@ module Gen(P : Params) = struct
     in
 
     let requires, real_requires =
-      SC.Libs.requires sctx ~dir ~scope ~dep_kind ~item
-        ~libraries:exes.buildable.libraries
-        ~preprocess:exes.buildable.preprocess
-        ~virtual_deps:[]
-        ~has_dot_merlin:exes.buildable.gen_dot_merlin
+      SC.Libs.requires_for_executables sctx ~dir ~scope ~dep_kind exes
     in
 
     SC.Libs.add_select_rules sctx ~dir ~scope exes.buildable.libraries;

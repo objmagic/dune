@@ -20,7 +20,7 @@ val libs : t -> Lib.DB.t
 
   val create
     :  scopes:Jbuild.Scope_info.t list
-    -> root:Path.t
+    -> context:string
     -> public_libs:Lib.DB.t
     -> (Path.t * Jbuild.Library.t) list
     -> t

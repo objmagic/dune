@@ -10,13 +10,16 @@ module Dir_with_jbuild = struct
     { src_dir : Path.t
     ; ctx_dir : Path.t
     ; stanzas : Stanzas.t
-    ; scope   : Lib_db.Scope.t With_required_by.t
+    ; scope   : Scope.t With_required_by.t
     }
 end
 
 type t =
   { context                          : Context.t
   ; build_system                     : Build_system.t
+  ; scopes                           : Scope.DB.t
+  ; public_libs                      : Lib.DB.t
+  ; installed_libs                   : Lib.DB.t
   ; stanzas                          : Dir_with_jbuild.t list
   ; packages                         : Package.t String_map.t
   ; file_tree                        : File_tree.t
@@ -38,6 +41,12 @@ let stanzas_to_consider_for_install t = t.stanzas_to_consider_for_install
 let cxx_flags t = t.cxx_flags
 
 let host_sctx t = Option.value t.host ~default:t
+
+let public_libs    t = t.public_libs
+let installed_libs t = t.installed_libs
+
+let find_scope_by_dir  t dir  = Scope.DB.find_by_dir  t.scopes dir
+let find_scope_by_nmae t name = Scope.DB.find_by_name t.scopes name
 
 let expand_var_no_root t var = String_map.find var t.vars
 
@@ -67,59 +76,58 @@ let create
       ~filter_out_optional_stanzas_with_missing_deps
       ~build_system
   =
-  let internal_libraries =
+  let installed_libs = Findlib.db context.findlib in
+  let public_libs, private_lins =
     List.concat_map stanzas ~f:(fun (dir, _, stanzas) ->
       let ctx_dir = Path.append context.build_dir dir in
       List.filter_map stanzas ~f:(fun stanza ->
         match (stanza : Stanza.t) with
         | Library lib -> Some (ctx_dir, lib)
         | _ -> None))
+    |> List.partition_map ~f:(fun (dir, lib) ->
+      match lib.public with
+      | Some _ -> Inl (dir, lib)
+      | None   -> Inr (dir, lib))
   in
-  let libs =
+  let public_libs =
+    Lib.DB.create_from_library_stanzas
+      ~kind:Public
+      ~parent:installed_libs
+  in
+  let scopes =
     let scopes =
       List.map scopes ~f:(fun scope ->
         { scope with Scope.root = Path.append context.build_dir scope.Scope.root })
     in
-    Lib_db.create context.findlib internal_libraries
-      ~scopes ~root:context.build_dir
+    Scopes.DB.create
+      ~scopes
+      ~context:context.name
+      ~public_libs
+      private_libs
   in
   let stanzas =
     List.map stanzas
-      ~f:(fun (dir, _, stanzas) ->
+      ~f:(fun (dir, scope, stanzas) ->
         let ctx_dir = Path.append context.build_dir dir in
         { Dir_with_jbuild.
           src_dir = dir
         ; ctx_dir
         ; stanzas
-        ; scope = Lib_db.find_scope libs ~dir:ctx_dir
+        ; scope = Scope.DB.find_by_name scopes scope.Scope_info.name
         })
   in
   let stanzas_to_consider_for_install =
     if filter_out_optional_stanzas_with_missing_deps then
-      List.concat_map stanzas ~f:(fun { ctx_dir; stanzas; _ } ->
-        List.filter_map stanzas ~f:(function
-          | Library _ -> None
-          | stanza    -> Some (ctx_dir, stanza)))
+      List.concat_map stanzas ~f:(fun { ctx_dir; stanzas; scope; _ } ->
+        List.map stanzas ~f:(function
+          | Library lib -> Option.some_if (Lib.DB.mem (Scope.libs scope) lib.name)
+          | stanza      -> Some (ctx_dir, stanza)))
       @ List.map
           (Lib_db.internal_libs_without_non_installable_optional_ones libs)
           ~f:(fun (dir, lib) -> (dir, Stanza.Library lib))
     else
       List.concat_map stanzas ~f:(fun { ctx_dir; stanzas; _ } ->
         List.map stanzas ~f:(fun s -> (ctx_dir, s)))
-  in
-  let module Libs_vfile =
-    Vfile_kind.Make_full
-      (struct type t = Lib.t list end)
-      (struct
-        open Sexp.To_sexp
-        let t _dir l = list string (List.map l ~f:Lib.best_name)
-      end)
-      (struct
-        open Sexp.Of_sexp
-        let t dir sexp =
-          let scope = Lib_db.find_scope libs ~dir in
-          List.map (list string sexp) ~f:(Lib_db.Scope.find_exn scope)
-      end)
   in
   let artifacts =
     Artifacts.create context stanzas ~f:(fun (d : Dir_with_jbuild.t) ->
@@ -169,12 +177,13 @@ let create
   { context
   ; host
   ; build_system
-  ; libs
+  ; scopes
+  ; public_libs
+  ; installed_libs
   ; stanzas
   ; packages
   ; file_tree
   ; stanzas_to_consider_for_install
-  ; libs_vfile = (module Libs_vfile)
   ; artifacts
   ; cxx_flags
   ; vars
@@ -218,129 +227,92 @@ let source_files t ~src_path =
   | None -> String_set.empty
   | Some dir -> File_tree.Dir.files dir
 
-let unique_library_name t lib =
-  Lib_db.unique_library_name t.libs lib
-
 module Libs = struct
   open Build.O
-  open Lib_db
-
-  let vrequires t ~dir ~item =
-    let fn = Path.relative dir (item ^ ".requires.sexp") in
-    Build.Vspec.T (fn, t.libs_vfile)
-
-  let load_requires t ~dir ~item =
-    Build.vpath (vrequires t ~dir ~item)
-
-  let vruntime_deps t ~dir ~item =
-    let fn = Path.relative dir (item ^ ".runtime-deps.sexp") in
-    Build.Vspec.T (fn, t.libs_vfile)
-
-  let load_runtime_deps t ~dir ~item =
-    Build.vpath (vruntime_deps t ~dir ~item)
 
   let with_fail ~fail build =
     match fail with
     | None -> build
     | Some f -> Build.fail f >>> build
 
-  let closure_generic t ~findlib_closure ~load_deps ~scope ~dep_kind lib_deps =
-    let internals, externals, fail =
-      Lib_db.Scope.interpret_lib_deps scope lib_deps
-    in
-    with_fail ~fail
-      (Build.record_lib_deps ~kind:dep_kind lib_deps
-       >>>
-       Build.all
-         (List.map internals ~f:(fun ((dir, lib) : Lib.Internal.t) ->
-            load_deps t ~dir ~item:lib.name))
-       >>^ fun internal_deps ->
-       let externals =
-         findlib_closure externals
-           ~required_by:scope.required_by
-           ~local_public_libs:(local_public_libs t.libs)
-         |> List.map ~f:Lib.external_
-       in
-       (internals, List.concat (externals :: internal_deps)))
-
-  let closure t ~scope ~dep_kind lib_deps =
-    closure_generic t lib_deps
-      ~load_deps:load_requires
-      ~findlib_closure:Findlib.closure
-      ~scope
-      ~dep_kind
-    >>^ fun (internals, deps) ->
-    Lib.remove_dups_preserve_order
-      (deps @ List.map internals ~f:Lib.internal)
-
-  let closed_ppx_runtime_deps_of t ~scope ~dep_kind lib_deps =
-    closure_generic t lib_deps
-      ~load_deps:load_runtime_deps
-      ~findlib_closure:Findlib.closed_ppx_runtime_deps_of
-      ~scope
-      ~dep_kind
-    >>^ fun (_, deps) ->
-    Lib.remove_dups_preserve_order deps
-
-  let add_select_rules t ~dir ~scope lib_deps =
-    Lib_db.Scope.resolve_selects scope lib_deps
-    |> List.iter ~f:(fun { dst_fn; src_fn } ->
-      let src = Path.relative dir src_fn in
-      let dst = Path.relative dir dst_fn in
-      add_rule t
-        (Build.path src
-         >>>
-         Build.action ~targets:[dst]
-           (Copy_and_add_line_directive (src, dst))))
-
-  let real_requires t ~dir ~scope ~dep_kind ~item ~libraries ~preprocess
-        ~virtual_deps =
-    let all_pps =
-      List.map (Preprocess_map.pps preprocess) ~f:Pp.to_string
-    in
-    let vrequires = vrequires t ~dir ~item in
-    add_rule t
-      (Build.record_lib_deps ~kind:dep_kind
-         (List.map virtual_deps ~f:Lib_dep.direct)
-       >>>
-       Build.fanout
-         (closure t ~scope ~dep_kind libraries)
-         (closed_ppx_runtime_deps_of t ~scope ~dep_kind
-            (List.map all_pps ~f:Lib_dep.direct))
-       >>>
-       Build.arr (fun (libs, rt_deps) ->
-         Lib.remove_dups_preserve_order (libs @ rt_deps))
-       >>>
-       Build.store_vfile vrequires);
-    Build.vpath vrequires
-
-  let requires t ~dir ~scope ~dep_kind ~item ~libraries ~preprocess ~virtual_deps
-        ~has_dot_merlin =
-    let real_requires = real_requires t ~dir ~scope ~dep_kind ~item ~libraries
-                          ~preprocess ~virtual_deps
+  let requires_generic
+        t
+        ~dir
+        ~requires
+        ~required_by
+        ~(buildable:Buildable.t)
+        ~dep_kind
+        ~virtual_deps
+        ~pps
+    =
+    let requires =
+      match requires with
+      | Ok x -> Build.return x
+      | Error e ->
+        Build.fail
+          { fail = fun () ->
+              raise (Lib.Error (With_required_by.append e required_by))
+          }
     in
     let requires =
-      if t.context.merlin && has_dot_merlin then
+      Build.record_lib_deps ~kind:dep_kind
+        (List.concat
+           [ buildable.libraries
+           ; List.map (Preprocess_map.pps buildable.preprocess) ~f:Lib_dep.of_pp
+           ; List.map virtual_deps ~f:Lib_dep.direct
+           ])
+      >>> requires
+    in
+    let requires_with_merlin =
+      if t.context.merlin && buildable.gen_dot_merlin then
         Build.path (Path.relative dir ".merlin-exists")
         >>>
-        real_requires
+        requires
       else
-        real_requires
+        requires
     in
-    (requires, real_requires)
+    (requires_with_merlin, requires)
 
-  let setup_runtime_deps t ~dir ~scope ~dep_kind ~item ~libraries
-        ~ppx_runtime_libraries =
-    let vruntime_deps = vruntime_deps t ~dir ~item in
-    add_rule t
-      (Build.fanout
-         (closure t ~scope ~dep_kind (List.map ppx_runtime_libraries ~f:Lib_dep.direct))
-         (closed_ppx_runtime_deps_of t ~scope ~dep_kind libraries)
-       >>>
-       Build.arr (fun (rt_deps, rt_deps_of_deps) ->
-         Lib.remove_dups_preserve_order (rt_deps @ rt_deps_of_deps))
-       >>>
-       Build.store_vfile vruntime_deps)
+  let add_select_rules t ~dir
+        (resolved_selects:Lib.Compile.Resolved_select.t list) =
+    List.iter resolved_selects ~f:(fun { dst_fn; src_fn } ->
+      let dst = Path.relative dir dst_fn in
+      add_rule t
+        (match src_fn with
+         | Ok src_fn ->
+           let src = Path.relative dir src_fn in
+           Build.copy_and_add_line_directive ~src ~dst
+         | Error e ->
+           Build.fail ~targets:[dst]
+             { fail = fun () ->
+                 raise (Lib.Error { data        = No_solution_found_for_select e
+                                  ; required_by = []
+                                  })
+             }))
+
+  let requires_for_library t ~dir ~scope ~deb_kind (lib : Jbuild.Library.t) =
+    let { With_required_by.data = scope; required_by } = scope in
+    let lib = Lib.DB.find_exn (Scope.libs scope) lib.name in
+    add_select_rules t ~dir (Lib.Compile.resolved_selects lib);
+    requires_generic t ~dir ~required_by
+      ~requires:(Lib.Compile.requires lib)
+      ~buildable:lib.buildable
+      ~virtual_deps:lib.virtual_deps
+      ~dep_kind
+
+  let requires_for_executables t ~dir ~scope ~dep_kind
+        (exes : Jbuild.Executables.t) =
+    let { With_required_by.data = scope; required_by } = scope in
+    let requires, resolved_selects =
+      Lib.DB.resolve_user_written_deps (Scope.libs scope)
+        exes.buildable.libraries
+        ~pps:(Jbuild.Preprocess_map.pps exes.buildable.preprocess)
+    in
+    add_select_rules t ~dir resolved_selects;
+    requires_generic t ~dir ~required_by ~requires
+      ~buildable:exes.buildable
+      ~virtual_deps:[]
+      ~dep_kind
 
   let lib_files_alias ~dir ~name ~ext =
     Alias.make (sprintf "lib-%s%s-all" name ext) ~dir
