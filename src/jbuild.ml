@@ -77,6 +77,11 @@ module Scope_info = struct
     type t = string option
 
     let compare : t -> t -> int = compare
+
+    let to_string = function
+      | None -> ""
+      | Some "" -> assert false
+      | Some s -> s
   end
 
   type t =

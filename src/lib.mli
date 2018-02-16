@@ -101,7 +101,7 @@ module Compile : sig
   (** Resolved select forms *)
   val resolved_selects
     :  t
-    -> required_by:With_required_by.Entry.t list Dep.t list
+    -> required_by:With_required_by.Entry.t list
     -> Resolved_select.t list
 end
 
@@ -202,7 +202,8 @@ module DB : sig
     :  t
     -> Jbuild.Lib_dep.t list
     -> pps:Jbuild.Pp.t list
-    -> (List.t, Error.t With_required_by.t) result * Resolved_select.t list
+    -> (List.t, Error.t With_required_by.t) result *
+       Compile.Resolved_select.t list
 
   (** Return the list of all libraries in this database. If
       [recursive] is true, also include libraries in parent databases

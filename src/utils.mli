@@ -23,14 +23,14 @@ val describe_target : Path.t -> string
 val library_object_directory
   :  dir:Path.t
   -> string
-  -> string
+  -> Path.t
 
 (** Return the directory where the object files for the given
     executable should be stored. *)
 val executable_object_directory
   :  dir:Path.t
   -> string
-  -> string
+  -> Path.t
 
 type target_kind =
   | Regular of string (* build context *) * Path.t

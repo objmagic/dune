@@ -122,9 +122,6 @@ let create
         List.map stanzas ~f:(function
           | Library lib -> Option.some_if (Lib.DB.mem (Scope.libs scope) lib.name)
           | stanza      -> Some (ctx_dir, stanza)))
-      @ List.map
-          (Lib_db.internal_libs_without_non_installable_optional_ones libs)
-          ~f:(fun (dir, lib) -> (dir, Stanza.Library lib))
     else
       List.concat_map stanzas ~f:(fun { ctx_dir; stanzas; _ } ->
         List.map stanzas ~f:(fun s -> (ctx_dir, s)))
@@ -317,35 +314,41 @@ module Libs = struct
   let lib_files_alias ~dir ~name ~ext =
     Alias.make (sprintf "lib-%s%s-all" name ext) ~dir
 
-  let setup_file_deps_alias t ((dir, lib) : Lib.Internal.t) ~ext files =
-    add_alias_deps t (lib_files_alias ~dir ~name:lib.name ~ext) files
+  let setup_file_deps_alias t ~dir ~ext lib files =
+    add_alias_deps t
+      (lib_files_alias ~dir ~name:(Library.best_name lib) ~ext) files
 
-  let setup_file_deps_group_alias t ((dir, lib) : Lib.Internal.t) ~exts =
-    setup_file_deps_alias t (dir, lib)
+  let setup_file_deps_group_alias t ~dir ~exts lib =
+    setup_file_deps_alias t lib ~dir
       ~ext:(String.concat exts ~sep:"-and-")
       (List.map exts ~f:(fun ext ->
-         Alias.stamp_file (lib_files_alias ~dir ~name:lib.name ~ext)))
+         Alias.stamp_file
+           (lib_files_alias ~dir ~name:(Library.best_name lib) ~ext)))
 
   let file_deps t ~ext =
     Build.dyn_paths (Build.arr (fun libs ->
       List.fold_left libs ~init:[] ~f:(fun acc (lib : Lib.t) ->
-        match Lib.local lib with
-        | None ->
-          Build_system.stamp_file_for_files_of t.build_system
-            ~dir:(Lib.obj_dir lib) ~ext :: acc
-        | Some { Lib .src ; name } ->
-          Alias.stamp_file (lib_files_alias ~dir:src ~name ~ext) :: acc
-      )))
-
-  let static_file_deps ~ext ((dir, lib) : Lib.Internal.t) =
-    Alias.dep (lib_files_alias ~dir ~name:lib.name ~ext)
+        let x =
+          if Lib.is_local lib then
+            Alias.stamp_file
+              (lib_files_alias ~dir:(Lib.src_dir lib) ~name:(Lib.name lib) ~ext)
+          else
+            Build_system.stamp_file_for_files_of t.build_system
+              ~dir:(Lib.obj_dir lib) ~ext
+        in
+        x :: acc)))
 end
 
 module Doc = struct
   let root t = Path.relative t.context.Context.build_dir "_doc"
 
-  let dir t lib =
-    let name = unique_library_name t lib in
+  let dir t (lib : Library.t) =
+    let name =
+      match lib.public with
+      | None ->
+        sprintf "%s@%s" lib.name (Scope_info.Name.to_string lib.scope_name)
+      | Some { name; _ } -> name
+    in
     Path.relative (root t) name
 
   let alias = Alias.make ".doc-all"
@@ -360,7 +363,7 @@ module Doc = struct
         )
       )))
 
-  let alias t lib = alias ~dir:(dir t (Lib.internal lib))
+  let alias t lib = alias ~dir:(dir t lib)
 
   let static_deps t lib = Alias.dep (alias t lib)
 

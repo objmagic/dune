@@ -126,7 +126,7 @@ module Package = struct
 
   let preds = Ps.of_list [P.ppx_driver; P.mt; P.mt_posix]
 
-  let archives t var preds =
+  let make_archives t var preds =
     Mode.Dict.of_func (fun ~mode ->
       List.map (Vars.get_words t.vars var (Ps.add (Mode.variant mode) preds))
         ~f:(Path.relative t.dir))
@@ -137,11 +137,11 @@ module Package = struct
   let requires         t = Vars.get_words t.vars "requires"         preds
   let ppx_runtime_deps t = Vars.get_words t.vars "ppx_runtime_deps" preds
 
-  let archives t = archives t "archive" preds
+  let archives t = make_archives t "archive" preds
   let plugins t =
     Mode.Dict.map2 ~f:(@)
-      (archives t "archive" (Ps.add Variant.plugin preds))
-      (archives t "plugin" preds)
+      (make_archives t "archive" (Ps.add Variant.plugin preds))
+      (make_archives t "plugin" preds)
 end
 
 module Unavailable_reason = struct
@@ -168,15 +168,16 @@ let root_package_name s =
 let parse_package t ~meta_file ~name ~parent_dir ~vars =
   let pkg_dir = Vars.get vars "directory" Ps.empty in
   let dir =
-    if pkg_dir = "" then
-      parent_dir
-    else if pkg_dir.[0] = '+' || pkg_dir.[0] = '^' then
-      Path.relative t.stdlib_dir
-        (String.sub pkg_dir ~pos:1 ~len:(String.length pkg_dir - 1))
-    else if Filename.is_relative pkg_dir then
+    match pkg_dir with
+    | None | Some "" -> parent_dir
+    | Some pkg_dir ->
+      if pkg_dir.[0] = '+' || pkg_dir.[0] = '^' then
+        Path.relative t.stdlib_dir
+          (String.sub pkg_dir ~pos:1 ~len:(String.length pkg_dir - 1))
+      else if Filename.is_relative pkg_dir then
       Path.relative parent_dir pkg_dir
-    else
-      Path.absolute pkg_dir
+      else
+        Path.absolute pkg_dir
   in
   let exists_if = Vars.get_words vars "exists_if" Ps.empty in
   let exists =
@@ -214,7 +215,7 @@ let parse_and_acknowledge_meta t ~dir ~meta_file (meta : Meta.t) =
    it and add its contents to [t.packages] *)
 let find_and_acknowledge_meta t ~fq_name =
   let root_name = root_package_name fq_name in
-  let rec loop dirs : (Path.t * Meta.t) option =
+  let rec loop dirs : (Path.t * Path.t * Meta.t) option =
     match dirs with
     | dir :: dirs ->
       let sub_dir = Path.relative dir root_name in
@@ -238,16 +239,12 @@ let find_and_acknowledge_meta t ~fq_name =
           loop dirs
     | [] ->
       match String_map.find root_name t.builtins with
-      | Some meta -> Some (t.stdlib_dir, meta)
+      | Some meta -> Some (t.stdlib_dir, Path.of_string "<internal>", meta)
       | None -> None
   in
   match loop t.path with
   | None ->
-    Hashtbl.add t.packages ~key:root_name
-      ~data:(Error { package     = root_name
-                   ; reason      = Not_found
-                   ; required_by = []
-                   })
+    Hashtbl.add t.packages ~key:root_name ~data:(Error Not_found)
   | Some (dir, meta_file, meta) ->
     parse_and_acknowledge_meta t meta ~meta_file ~dir
 
@@ -288,12 +285,13 @@ let all_packages t =
     match data with
     | Ok    p -> p :: acc
     | Error _ -> acc)
-  |> List.sort ~cmp:(fun a b -> String.compare a.name b.name)
+  |> List.sort ~cmp:(fun (a : Package.t) b -> String.compare a.name b.name)
 
 let create ~stdlib_dir ~path =
   { stdlib_dir
   ; path
   ; builtins = Meta.builtins ~stdlib_dir
+  ; packages = Hashtbl.create 1024
   }
 
 let all_unavailable_packages t =
@@ -301,9 +299,8 @@ let all_unavailable_packages t =
   Hashtbl.fold t.packages ~init:[] ~f:(fun ~key:name ~data acc ->
     match data with
     | Ok    _ -> acc
-    | Error e -> ((name, e) :: acc)
-  |> List.sort ~cmp:(fun (a, _) (b, _) ->
-    String.compare a b)
+    | Error e -> ((name, e) :: acc))
+  |> List.sort ~cmp:(fun (a, _) (b, _) -> String.compare a b)
 
 let stdlib_with_archives t =
   let x = find_exn t ~required_by:[] "stdlib" in

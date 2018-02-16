@@ -48,7 +48,12 @@ val installed_libs : t -> Lib.DB.t
 val find_scope_by_dir  : t -> Path.t        -> Scope.t
 val find_scope_by_name : t -> string option -> Scope.t
 
-val expand_vars : t -> scope:Lib_db.Scope.t -> dir:Path.t -> String_with_vars.t -> string
+val expand_vars
+  :  t
+  -> scope:Scope.t
+  -> dir:Path.t
+  -> String_with_vars.t
+  -> string
 
 val add_rule
   :  t
@@ -124,19 +129,17 @@ module Libs : sig
     -> Jbuild.Executables.t
     -> (unit, Lib.List.t) Build.t * (unit, Lib.List.t) Build.t
 
-  (** [file_deps ~ext] is an arrow that record dependencies on all the files with
-      extension [ext] of the libraries given as input. *)
+  (** [file_deps ~ext] is an arrow that record dependencies on all the
+      files with extension [ext] of the libraries given as input. *)
   val file_deps : t -> ext:string -> (Lib.t list, Lib.t list) Build.t
-
-  (** Same as [file_deps] but for a single known library *)
-  val static_file_deps : ext:string -> Lib.Internal.t -> ('a, 'a) Build.t
 
   (** Setup the alias that depends on all files with a given extension
       for a library *)
   val setup_file_deps_alias
     :  t
-    -> Lib.Internal.t
+    -> dir:Path.t
     -> ext:string
+    -> Library.t
     -> Path.t list
     -> unit
 
@@ -146,8 +149,9 @@ module Libs : sig
   *)
   val setup_file_deps_group_alias
     :  t
-    -> Lib.Internal.t
+    -> dir:Path.t
     -> exts:string list
+    -> Library.t
     -> unit
 end
 
@@ -156,7 +160,7 @@ module Deps : sig
   (** Evaluates to the actual list of dependencies, ignoring aliases *)
   val interpret
     :  t
-    -> scope:Lib_db.Scope.t
+    -> scope:Scope.t
     -> dir:Path.t
     -> Dep_conf.t list
     -> (unit, Path.t list) Build.t
@@ -165,13 +169,13 @@ end
 module Doc : sig
   val root : t -> Path.t
 
-  val dir : t -> Lib.Internal.t -> Path.t
+  val dir : t -> Library.t -> Path.t
 
   val deps : t -> (Lib.t list, Lib.t list) Build.t
 
-  val static_deps : t -> Lib.Internal.t -> ('a, 'a) Build.t
+  val static_deps : t -> Library.t -> ('a, 'a) Build.t
 
-  val setup_deps : t -> Lib.Internal.t -> Path.t list -> unit
+  val setup_deps : t -> Library.t -> Path.t list -> unit
 end
 
 (** Interpret action written in jbuild files *)
@@ -188,7 +192,7 @@ module Action : sig
     -> dir:Path.t
     -> dep_kind:Build.lib_dep_kind
     -> targets:targets
-    -> scope:Lib_db.Scope.t With_required_by.t
+    -> scope:Scope.t With_required_by.t
     -> (Path.t list, Action.t) Build.t
 end
 
@@ -205,13 +209,13 @@ module PP : sig
     -> preprocess:Preprocess_map.t
     -> preprocessor_deps:Dep_conf.t list
     -> lib_name:string option
-    -> scope:Lib_db.Scope.t With_required_by.t
+    -> scope:Scope.t With_required_by.t
     -> Module.t String_map.t
 
   (** Get a path to a cached ppx driver *)
   val get_ppx_driver
     : t
-    -> scope:Lib_db.Scope.t With_required_by.t
+    -> scope:Scope.t With_required_by.t
     -> Pp.t list
     -> Path.t
 
@@ -224,7 +228,7 @@ end
 
 val expand_and_eval_set
   :  t
-  -> scope:Lib_db.Scope.t
+  -> scope:Scope.t
   -> dir:Path.t
   -> Ordered_set_lang.Unexpanded.t
   -> standard:string list

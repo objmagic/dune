@@ -15,7 +15,7 @@ val merge_all : t list -> t option
 val add_rules
   : Super_context.t
   -> dir:Path.t
-  -> scope:Lib_db.Scope.t With_required_by.t
+  -> scope:Scope.t With_required_by.t
   -> t
   -> unit
 

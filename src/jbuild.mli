@@ -11,10 +11,14 @@ end
 
 module Scope_info : sig
   module Name : sig
+    (* CR-someday diml: change to [private string] and encode [None]
+       as [""] *)
     (** [None] is the for the {!anonymous} scope *)
     type t = string option
 
     val compare : t -> t -> int
+
+    val to_string : t -> string
   end
 
   type t =
