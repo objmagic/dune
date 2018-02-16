@@ -17,13 +17,11 @@ end
 type t =
   { context                          : Context.t
   ; build_system                     : Build_system.t
-  ; libs                             : Lib_db.t
   ; stanzas                          : Dir_with_jbuild.t list
   ; packages                         : Package.t String_map.t
   ; file_tree                        : File_tree.t
   ; artifacts                        : Artifacts.t
   ; stanzas_to_consider_for_install  : (Path.t * Stanza.t) list
-  ; libs_vfile                       : (module Vfile_kind.S with type t = Lib.t list)
   ; cxx_flags                        : string list
   ; vars                             : Action.Var_expansion.t String_map.t
   ; ppx_dir                          : Path.t
@@ -38,7 +36,6 @@ let artifacts t = t.artifacts
 let file_tree t = t.file_tree
 let stanzas_to_consider_for_install t = t.stanzas_to_consider_for_install
 let cxx_flags t = t.cxx_flags
-let libs t = t.libs
 
 let host_sctx t = Option.value t.host ~default:t
 
