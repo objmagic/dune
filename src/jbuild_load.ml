@@ -12,11 +12,11 @@ let filter_stanzas ~ignore_promoted_rules stanzas =
 module Jbuilds = struct
   type script =
     { dir   : Path.t
-    ; scope : Scope.t
+    ; scope : Scope_info.t
     }
 
   type one =
-    | Literal of (Path.t * Scope.t * Stanza.t list)
+    | Literal of (Path.t * Scope_info.t * Stanza.t list)
     | Script of script
 
   type t =
@@ -170,7 +170,7 @@ type conf =
   { file_tree : File_tree.t
   ; jbuilds   : Jbuilds.t
   ; packages  : Package.t String_map.t
-  ; scopes    : Scope.t list
+  ; scopes    : Scope_info.t list
   }
 
 let load ~dir ~scope ~ignore_promoted_rules =
@@ -221,13 +221,13 @@ let load ?extra_ignored_subtrees ?(ignore_promoted_rules=false) () =
     String_map.values packages
     |> List.map ~f:(fun pkg -> (pkg.Package.path, pkg))
     |> Path.Map.of_alist_multi
-    |> Path.Map.map ~f:Scope.make
+    |> Path.Map.map ~f:Scope_info.make
   in
   let scopes =
     if Path.Map.mem Path.root scopes then
       scopes
     else
-      Path.Map.add scopes ~key:Path.root ~data:Scope.empty
+      Path.Map.add scopes ~key:Path.root ~data:Scope_info.anonymous
   in
   let rec walk dir jbuilds scope =
     if File_tree.Dir.ignored dir then
@@ -249,7 +249,7 @@ let load ?extra_ignored_subtrees ?(ignore_promoted_rules=false) () =
           walk dir jbuilds scope)
     end
   in
-  let jbuilds = walk (File_tree.root ftree) [] Scope.empty in
+  let jbuilds = walk (File_tree.root ftree) [] Scope_info.empty in
   { file_tree = ftree
   ; jbuilds = { jbuilds; ignore_promoted_rules }
   ; packages

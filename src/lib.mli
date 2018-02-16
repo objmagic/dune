@@ -12,14 +12,6 @@ val name : t -> string
 (** All the names the library might be referred by *)
 val names : t -> string list
 
-(** Unique identifier for this library. Note that it is only unique in
-    the current process. *)
-val unique_id : t -> int
-
-(** A unique way to refer to this library. Note that [unique_name t]
-    is not part of [names t] *)
-val unique_name : t -> string
-
 (* CR-someday diml: this should be [Path.t list], since some libraries
    have multiple source directories because of [copy_files]. *)
 (** Directory where the source files for the library are located. *)
@@ -159,6 +151,18 @@ module DB : sig
   (** A database allow to resolve library names *)
   type t
 
+  module Kind : sig
+    type t =
+      | Installed
+      (** Installed libraries               *)
+      | Public
+      (** Public libraries of the workspace *)
+      | Private of Jbuild.Scope_info.t
+      (** Private libraries of the given scope *)
+  end
+
+  val kind : t -> Kind.t
+
   (** Create a new library database. [resolve] is used to resolve
       library names in this database.
 
@@ -168,16 +172,17 @@ module DB : sig
       [all] returns the list of names of libraries available in this database.
   *)
   val create
-    :  ?parent:t
+    :  kind:Kind.t
+    -> ?parent:t
     -> resolve:(string -> (Info.t, Error.Library_not_available.Reason.t) result)
     -> all:(unit -> string list)
-    -> ?unique_name_suffix:string
     -> unit
     -> t
 
   (** Create a database from a list of library stanzas *)
   val create_from_library_stanzas
-    :  ?parent:t
+    :  kind:Kind.t
+    -> ?parent:t
     -> (Path.t * Jbuild.Library.t) list
     -> t
 
@@ -206,6 +211,9 @@ module DB : sig
       recursively. *)
   val all : ?recursive:bool -> t -> lib list
 end with type lib := t
+
+(** The database this library is part of *)
+val db_name : t -> DB.t
 
 (** {1 Dependencies for META files} *)
 

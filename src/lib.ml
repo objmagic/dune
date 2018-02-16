@@ -117,6 +117,13 @@ module Init = struct
     }
 end
 
+module DB_kind : sig
+  type t =
+    | Installed
+    | Public
+    | Private of Jbuild.Scope_info.t
+end
+
 type t =
   { loc              : Loc.t
   ; name             : string
@@ -142,7 +149,7 @@ type db =
   ; resolve : string -> (Info.t, Error.Library_not_available.Reason.t) result
   ; table   : (string, resolve_status) Hashtbl.t
   ; all     : string list Lazy.t
-  ; suffix  : string option
+  ; kind    : DB_kind.t
   }
 
 and resolve_status =
@@ -187,13 +194,6 @@ exception Error of Error.t With_required_by.t
 
 let name  t = t.name
 let names t = t.name :: t.other_names
-
-let unique_name t =
-  match t.db.suffix with
-  | None   -> t.name
-  | Some s -> t.name ^ s
-
-let unique_id t = t.unique_id
 
 let kind         t = t.kind
 let synopsis     t = t.synopsis
@@ -606,17 +606,20 @@ end
 module DB = struct
   type t = db
 
+  module Kind = DB_kind
   module Resolution_failure = Resolution_failure
 
-  let create ?parent ~resolve ~all ?unique_name_suffix () =
-    { parent
+  let kind t = t.kind
+
+  let create ~kind ?parent ~resolve ~all () =
+    { kind
+    ; parent
     ; resolve
     ; table  = Hashtbl.create 1024
     ; all    = Lazy.from_fun all
-    ; suffix = unique_name_suffix
     }
 
-  let create_from_library_stanzas ?parent stanzas =
+  let create_from_library_stanzas ~kind ?parent stanzas =
     let map =
       List.concat_map stanzas ~f:(fun (dir, conf) ->
         let info = Info.of_library_stanza ~dir conf in
@@ -632,7 +635,7 @@ module DB = struct
           (Loc.to_file_colon_line info1.loc)
           (Loc.to_file_colon_line info2.loc)
     in
-    create () ?parent
+    create () ?parent ~kind
       ~resolve:(fun name ->
         match String_map.find name map with
         | None -> Error "not found"

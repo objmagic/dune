@@ -39,6 +39,12 @@ val artifacts : t -> Artifacts.t
 val stanzas_to_consider_for_install : t -> (Path.t * Stanza.t) list
 val cxx_flags : t -> string list
 
+(** All public libraries of the workspace *)
+val public_libs : t -> Lib.DB.t
+
+(** Installed libraries that are not part of the workspace *)
+val installed_libs : t -> Lib.DB.t
+
 val expand_vars : t -> scope:Lib_db.Scope.t -> dir:Path.t -> String_with_vars.t -> string
 
 val add_rule

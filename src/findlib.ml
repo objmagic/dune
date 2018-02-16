@@ -288,6 +288,7 @@ let all_packages t =
 
 let create_db t =
   Lib.DB.create
+    ~kind:Installed
     ~resolve:(resolve t)
     ~all:(fun () -> List.map (all_packages t) ~f:(fun t -> t.name))
 
