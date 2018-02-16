@@ -151,13 +151,10 @@ module Unavailable_reason = struct
 end
 
 type t =
-  { stdlib_dir    : Path.t
-  ; path          : Path.t list
-  ; builtins      : Meta.t String_map.t
-  ; packages      : (string,
-                     (Package.t, Unavailable_reason.t) result)
-                      Hashtbl.t
-  ; db            : Lib.DB.t Lazy.t
+  { stdlib_dir : Path.t
+  ; path       : Path.t list
+  ; builtins   : Meta.t String_map.t
+  ; packages   : (string, (Package.t, Unavailable_reason.t) result) Hashtbl.t
   }
 
 let path t = t.path
@@ -293,21 +290,11 @@ let all_packages t =
     | Error _ -> acc)
   |> List.sort ~cmp:(fun a b -> String.compare a.name b.name)
 
-let create_db t =
-  Lib.DB.create
-    ~kind:Installed
-    ~resolve:(resolve t)
-    ~all:(fun () -> List.map (all_packages t) ~f:(fun t -> t.name))
-
 let create ~stdlib_dir ~path =
-  let rec t =
-    { stdlib_dir
-    ; path
-    ; builtins = Meta.builtins ~stdlib_dir
-    ; db = lazy (create_db t)
-    }
-  in
-  t
+  { stdlib_dir
+  ; path
+  ; builtins = Meta.builtins ~stdlib_dir
+  }
 
 let all_unavailable_packages t =
   load_all_packages t;
