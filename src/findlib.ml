@@ -30,15 +30,16 @@ module Rule = struct
     }
 end
 
-(* Set of rules for a given variable of a package *)
-module Rules = struct
-  (* To implement the algorithm described in [1], [set_rules] is
-     sorted by decreasing number of formal predicates, then according
-     to the order of the META file. [add_rules] are in the same order
-     as in the META file.
+(* Set of rules for a given variable of a package. Implements the
+   algorithm described here:
 
-     [1] http://projects.camlcity.org/projects/dl/findlib-1.6.3/doc/ref-html/r729.html
-     *)
+   http://projects.camlcity.org/projects/dl/findlib-1.6.3/doc/ref-html/r729.html
+*)
+module Rules = struct
+  (* To implement the algorithm, [set_rules] is sorted by decreasing
+     number of formal predicates, then according to the order of the
+     META file. [add_rules] are in the same order as in the META
+     file. *)
   type t =
     { set_rules : Rule.t list
     ; add_rules : Rule.t list

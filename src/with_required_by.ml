@@ -4,7 +4,7 @@ module Entry = struct
   type t =
     | Path of Path.t
     | Alias of Path.t
-    | Library of string
+    | Library of Path.t * string
     | Preprocess of string list
 
   let jbuild_file_in ~dir = Path (Utils.jbuild_file_in ~dir)
@@ -12,7 +12,7 @@ module Entry = struct
   let to_string = function
     | Path p -> Utils.describe_target p
     | Alias p -> "alias " ^ Utils.describe_target p
-    | Library s -> sprintf "library %S" s
+    | Library (_, s) -> sprintf "library %S" s
     | Preprocess l -> Sexp.to_string (List [Atom "pps"; Sexp.To_sexp.(list string) l])
 
   let pp ppf x =
@@ -23,6 +23,9 @@ type 'a t =
   { data : 'a
   ; required_by : Entry.t list
   }
+
+let prepend_one t entry = { t with required_by = entry :: t.required_by }
+let append t entries = { t with required_by = t.required_by @ entries }
 
 exception E of exn * Entry.t list
 

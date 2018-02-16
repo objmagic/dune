@@ -38,7 +38,6 @@ val file_tree : t -> File_tree.t
 val artifacts : t -> Artifacts.t
 val stanzas_to_consider_for_install : t -> (Path.t * Stanza.t) list
 val cxx_flags : t -> string list
-val libs      : t -> Lib_db.t
 
 val expand_vars : t -> scope:Lib_db.Scope.t -> dir:Path.t -> String_with_vars.t -> string
 
@@ -100,44 +99,12 @@ val resolve_program
 val unique_library_name : t -> Lib.t -> string
 
 module Libs : sig
-
-  val load_requires     : t -> dir:Path.t -> item:string -> (unit, Lib.t list) Build.t
-  val load_runtime_deps : t -> dir:Path.t -> item:string -> (unit, Lib.t list) Build.t
-
-  (** Add rules for (select ...) forms *)
-  val add_select_rules
-    : t
-    -> dir:Path.t
-    -> scope:Lib_db.Scope.t With_required_by.t
-    -> Lib_deps.t
-    -> unit
-
-  (** Returns the closed list of dependencies for a dependency list in
-     a stanza. The second arrow is the same as the first one but with
-     an added dependency on the .merlin if [has_dot_merlin] is
-     [true]. *)
-  val requires
-    :  t
-    -> dir:Path.t
-    -> scope:Lib_db.Scope.t With_required_by.t
-    -> dep_kind:Build.lib_dep_kind
-    -> item:string (* Library name or first exe name *)
-    -> libraries:Lib_deps.t
-    -> preprocess:Preprocess_map.t
-    -> virtual_deps:string list
-    -> has_dot_merlin:bool
-    -> (unit, Lib.t list) Build.t * (unit, Lib.t list) Build.t
-
-  (** Setup the rules for ppx runtime dependencies *)
-  val setup_runtime_deps
-    :  t
-    -> dir:Path.t
-    -> scope:Lib_db.Scope.t With_required_by.t
-    -> dep_kind:Build.lib_dep_kind
-    -> item:string (* Library name or first exe name *)
-    -> libraries:Lib_deps.t
-    -> ppx_runtime_libraries:string list
-    -> unit
+  val with_resolved_deps
+    :  (Lib.t list, Lib.Error.t With_required_by.t) result
+    -> Lib.Resolved_select.t list
+    -> gen_dot_merlin:bool
+    -> f:(Lib.t list -> 'a)
+    -> 'a
 
   (** [file_deps ~ext] is an arrow that record dependencies on all the files with
       extension [ext] of the libraries given as input. *)

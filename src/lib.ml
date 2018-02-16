@@ -9,6 +9,17 @@ module Info = struct
     type t =
       | Simple  of string list
       | Complex of Jbuild.Lib_dep.t list
+
+    let of_lib_deps deps =
+      let rec loop (deps : Jbuild.Lib_dep.t list) acc =
+        match deps with
+        | [] -> Some (List.rev acc)
+        | Direct name :: deps -> loop (name :: acc) deps
+        | Select _ -> None
+      in
+      match loop deps [] with
+      | Some l -> Simple l
+      | None   -> Complex conf.libraries
   end
 
   type t =
@@ -26,7 +37,7 @@ module Info = struct
     ; jsoo_runtime     : string list
     ; requires         : Deps.t
     ; ppx_runtime_deps : string list
-    ; ppx_used         : string list
+    ; pps              : string list
     ; optional         : bool
     }
 
@@ -49,17 +60,6 @@ module Info = struct
     let jsoo_runtime =
       List.map conf.js_of_ocaml.javascript_files ~f:(Path.relative dir)
     in
-    let requires : Deps.t =
-      let rec loop (deps : Jbuild.Lib_dep.t list) acc =
-        match deps with
-        | [] -> Some (List.rev acc)
-        | Direct name :: deps -> loop (name :: acc) deps
-        | Select _ -> None
-      in
-      match loop conf.libraries [] with
-      | Some l -> Simple l
-      | None   -> Complex conf.libraries
-    in
     { loc = conf.buildable.loc
     ; name
     ; other_names
@@ -73,7 +73,7 @@ module Info = struct
     ; optional = conf.optional
     ; stubs
     ; jsoo_runtime
-    ; requires         = Complex conf.libraries
+    ; requires         = Deps.of_lib_deps conf.libraries
     ; ppx_runtime_deps = conf.ppx_runtime_libraries
     ; when_to_install
     }
@@ -101,8 +101,6 @@ module Error0 = struct
     type t = { loc : Loc.t }
   end
 end
-
-exception Error of Error.t With_required_by.t
 
 module Resolved_select = struct
   module No_solution_found = struct
@@ -137,8 +135,9 @@ type t =
   ; archives         : Path.t list Mode.Dict.t
   ; plugins          : Path.t list Mode.Dict.t
   ; jsoo_runtime     : string list
-  ; requires         : t list or_error * Resolved_select.t list
+  ; requires         : t list or_error
   ; ppx_runtime_deps : t list or_error
+  ; resolved_select  : Resolved_select.t list
   ; install_status   : Info.Install_status.t
   ; db               : t
   }
@@ -148,15 +147,15 @@ type db =
   ; resolve : string -> (Info.t, Error.Library_not_available.Reason.t) result
   ; table   : (string, resolve_status) Hashtbl.t
   ; all     : string list Lazy.t
+  ; suffix  : string option
   }
 
 and resolve_status =
-  | Resolved     of t
   | Initializing of Init.t
-  | Failed       of error
+  | Done         of (t, Error0.Library_not_available.Reason.t) result
 
 and error =
-  | Library_not_available        of Library_not_available.t
+  | Library_not_available        of Error0.Library_not_available.Reason.t
   | No_solution_found_for_select of No_solution_found_for_select.t
   | Dependency_cycle             of (Path.t * string) list
   | Conflict                     of conflict
@@ -166,7 +165,7 @@ and conflict =
   ; lib2 : t * With_required_by.Entry.t list
   }
 
-and 'a or_error = ('a, error) result
+and 'a or_error = ('a, error With_required_by.t) result
 
 module Error = struct
   include Error0
@@ -185,12 +184,19 @@ module Error = struct
     | Conflict                     of Conflict.t
 end
 
+exception Error of Error.t With_required_by.t
+
 (* +-----------------------------------------------------------------+
    | Generals                                                        |
    +-----------------------------------------------------------------+ *)
 
 let name  t = t.name
 let names t = t.name :: t.other_names
+
+let unique_name t =
+  match t.db.suffix with
+  | None   -> t.name
+  | Some s -> t.name ^ s
 
 let unique_id t = t.unique_id
 
@@ -200,10 +206,18 @@ let archives     t = t.archives
 let plugins      t = t.plugins
 let jsoo_runtime t = t.jsoo_runtime
 
+let resolved_select t = t.resolved_select
+
 let src_dir t = t.src_dir
 let obj_dir t = t.obj_dir
 
 let is_local t = Path.is_local t.obj_dir
+
+let to_init t : Init.t =
+  { unique_id = t.unique_id
+  ; path      = t.src_dir
+  ; name      = t.name
+  }
 
 module List = struct
   type nonrec t = t list
@@ -258,7 +272,7 @@ let jsoo_archives t =
   List.map t.archives.byte ~f:(Path.extend_basename ~suffix:".js")
 
 (* +-----------------------------------------------------------------+
-   | Library name resolution                                         |
+   | Library name resolution and transitive closure                  |
    +-----------------------------------------------------------------+ *)
 
 let gen_unique_id =
@@ -268,14 +282,8 @@ let gen_unique_id =
     next := n + 1;
     n
 
-(* Special marker to detect dependencies when resolving optional
-   libraries.
-
-   If we see this marker in the resolve cache, we know that we have a
-   dependency cycle. *)
-let loop_marker = Dependency_cycle []
-exception Cycle_detected_while_deciding_optional_library_state
-
+(* Dependency stack used while resolving the dependencies of a library
+   that was just returned by the [resolve] callback *)
 module Dep_stack = struct
   type t =
     { stack : Init.t list
@@ -287,7 +295,18 @@ module Dep_stack = struct
     ; seen  = Int_set.empty
     }
 
-  let dependency_cycle (last_id, last_path, last_name) dep_path =
+  let to_requires_by stack =
+    List.map stack ~f:(fun { Init.path; name; _ } ->
+      With_required_by.Entry.Library (path, name))
+
+  let to_with_required_by t data =
+    { With_required_by.
+      data
+    ; required_by = to_requires_by t.stack
+    }
+
+  (* pre-condition: [Int_set.mem x.unique_id t.seem] *)
+  let dependency_cycle t (last : Init.t) =
     let rec build_loop acc stack =
       match stack with
       | [] -> assert false
@@ -298,34 +317,46 @@ module Dep_stack = struct
         else
           build_loop acc stack
     in
-    let loop = build_loop [(last_path, last_name)] dep_path in
-    raise (Dependency_cycle loop)
+    let loop = build_loop [(last_path, last_name)] t.stack in
+    { data        = Dependency_cycle loop
+    ; required_by = []
+    }
 
-  let push t (x : Init.t) =
-    let (id, _, _) = x in
-    if Int_set.mem id t.seen then dependency_cycle x t.stack;
-    let stack = x :: t.stack in
+  (* pre-condition: [not (Int_set.mem x.unique_id t.seem)] *)
+  let push_fresh t (x : Init.t) =
     { stack = x :: t.stack
     ; seen  = Int_set.add id t.seen
     }
+
+  let push t (x : Init.t) =
+    if Int_mem.set x.unique_id t.seen then
+      Error (dependency_cycle t x)
+    else
+      Ok (push_fresh t x)
 end
 
-let rec make db init (info : Info.t) : t =
-  let requires = lazy (
-    let deps, resolved_select = resolve_deps db info.requires ~stack in
-    let deps =
-      match deps with
-      | Error _ -> deps
-      | Ok deps ->
-        let ppx_used = resolve_simple_deps db info.ppx_used in
-        let 
-    in
-    (deps, resolved_select)
+let ( >>= ) res f =
+  match res with
+  | Error _ as res -> res
+  | Ok x -> f x
+
+let rec make db (info : Info.t) ~unique_id ~stack =
+  let requires, resolved_select =
+    resolve_user_deps db info.requires ~pps:info.pps ~stack
   in
+  let ppx_runtime_deps =
+    resolve_simple_deps db info.ppx_runtime_deps ~stack
+  in
+  let map_error x =
+    Result.map_error x ~f:(fun e ->
+      With_required_by.prepend_one e (Library (info.src_dir, info.name)))
+  in
+  let requires         = map_error requires         in
+  let ppx_runtime_deps = map_error ppx_runtime_deps in
   { loc              = info.loc
   ; name             = info.loc
   ; other_names      = info.other_names
-  ; unique_id        = gen_unique_id ()
+  ; unique_id        = unique_id
   ; kind             = info.kind
   ; src_dir          = info.src_dir
   ; obj_dir          = info.obj_dir
@@ -334,118 +365,108 @@ let rec make db init (info : Info.t) : t =
   ; archives         = info.archives
   ; plugins          = info.plugins
   ; jsoo_runtime     = info.jsoo_runtime
-  ; requires         = Inl { info = requires
-  ; ppx_runtime_deps = resolve_simple_deps db info.ppx_runtime_deps
+  ; requires         = requires
+  ; ppx_runtime_deps = ppx_runtime_deps
+  ; resolved_select  = resolved_select
   ; db               = db
   }
 
-and find db name =
+and find_internal db name ~stack =
   match Hashtbl.find db.resolve_cache name with
-  | Some (Dependency_cycle []) ->
-    raise_notrace Cycle_detected_while_deciding_optional_library_state
-  | Some x -> x
+  | Some (Initializing init) ->
+    Error (Dep_stack.dependency_cycle stack init)
+  | Some (Done x) -> x
   | None ->
     match db.resolve name with
     | Ok info ->
+      let names = info.name :: info.other_names in
+      if not (List.mem name ~set:names) then
+        Sexp.code_error
+          "Lib_db.DB: resolver result didn't include requested name"
+          [ "requested_name", Sexp.To_sexp.string name
+          ; "returned_names", Sexp.To_sexp.(list string) name
+          ];
+      let unique_id = get_unique_id () in
       let init =
         { Init.
           unique_id = gen_unique_id ()
         ; path      = Option.value info.src_dir ~default:info.obj_dir
-        ; 
-      let t = make db info in
-      let res =
-        if not info.optional then begin
-          Ok t
-        else begin
-          Hashtbl.add t.resolve_cache ~key:name ~data:loop_marker;
-          match fst (Lazy.force t.requires) with
-          | Ok _ -> Ok t
-          | Error _ ->
-            let msg =
-              "ignored as optional and some dependencies \
-               are not available"
-            in
-            Error { name; reason = Hidden msg }
-          | exception Cycle_detected_while_deciding_optional_library_state ->
-            let msg =
-              (* CR-someday diml: improve this error *)
-              "ignored as optional and a cycle was detected"
-            in
-            Error { name; reason = Hidden msg }
-        end
+        ; name      = name
+        }
       in
-      let names = names t in
-      if not (List.mem name ~set:names) then
-        Sexp.code_error
-          "Lib_db.DB.find: resolver result didn't include requested name"
-          [ "requested_name", Sexp.To_sexp.string name
-          ; "returned_names", Sexp.To_sexp.(list string) name
-          ];
+      let stack = Dep_stack.push_fresh stack init in
+      (* Add [init] to the table, to detect loops *)
       List.iter names ~f:(fun name ->
-        Hashtbl.add t.resolve_cache ~key:name ~data:res);
-      res
-    | Error reason ->
+        Option.iter (Hashtbl.find t.table name) ~f:(fun t ->
+          let to_sexp = Sexp.To_sexp.(pair Path.sexp_of_t (list string)) in
+          Sexp.code_error
+            "Lib_db.DB: resolver returned name that's already in the table"
+            [ "returned_lib"    , to_sexp (info.path, names)
+            ; "conflicting_with", to_sexp (t.path, names t)
+            ]);
+        let init = if name = init.name then init else { init with name } in
+        Hashtbl.add t.table ~key:name ~data:init);
+      let t = make db info ~unique_id ~stack in
       let res =
-        Error (Library_not_available { name; reason = reason })
+        if not info.optional ||
+           (Result.is_ok t.requires && Result.is_ok t.ppx_runtime_deps) then
+          Ok t
+        else
+          Error (Hidden "ignored (optional with unavailable dependencies)")
       in
+      List.iter names ~f:(fun name ->
+        Hashtbl.replace t.resolve_cache ~key:name ~data:res);
+      res
+    | Error reason as res ->
       let res =
         match db.parent with
         | None -> res
         | Some db ->
-          match find db name with
-          | Ok _ as res' -> res'
+          let res' = find_internal db name ~stack in
+          match res' with
+          | Ok _ -> res'
           | Error reason' ->
             if reason = Not_found then
-              Error (Library_not_available na')
+              res'
             else
               res
       in
       Hashtbl.add t.resolve_cache ~key:name ~data:res;
       res
 
-and mem db name =
-  match find db name with
+and mem_internal db name ~stack =
+  match find_internal db name ~stack with
   | Ok    _ -> true
   | Error _ -> false
 
-and resolve_simple_deps db names =
+and resolve_simple_deps db names ~stack =
   let rec loop acc = function
     | [] -> Ok (List.rev acc)
     | name :: names ->
-      match find t name with
-      | Ok x -> loop (x :: acc) names
-      | Error reason -> Error (Library_not_available reason)
+      find_internal db name ~stack >>= fun x ->
+      loop (x :: acc) names
   in
   loop [] names
 
-and resolve_complex_deps db deps =
-  let find_all acc names =
-    | [] -> Some (List.rev acc)
-    | name :: names ->
-      match find db name with
-      | Ok t -> find_all (t :: acc) names
-      | Error _ -> None
-  in
+and resolve_complex_deps db deps ~stack =
   let res, resolved_select_forms =
     List.fold_left deps ~init:(Ok [], []) ~f:(fun (acc_res, acc_select) dep ->
       let res, acc_select =
         match (dep : Jbuild.Lib_dep.t) with
         | Direct name ->
-          let res =
-            match find db name with
-            | Ok _ as res -> res
-            | Error e -> Error (Library_not_available (name, e))
-          in
-          (res, acc_select)
+          (find_internal db name ~stack, acc_select)
         | Select { result_fn; choices; loc } ->
           let res, src_fn =
             match
               List.find_map choices ~f:(fun { required; forbidden; file } ->
-                if String_set.exists forbidden ~f:(mem db) then
+                if String_set.exists forbidden ~f:(mem db ~stack) then
                   None
                 else
-                  Option.map (find_all db (String_set.elements required))
-                    ~f:(fun ts -> (ts, file)))
+                  match
+                    resolve_simple_deps db (String_set.elements required) ~stack
+                  with
+                  | Ok ts -> Some (ts, file)
+                  | Error _ -> None)
             with
             | Some (ts, file) ->
               (Ok ts, Ok file)
@@ -460,8 +481,6 @@ and resolve_complex_deps db deps =
       let res =
         match res, acc_res with
         | Ok l, Ok acc -> Ok (List.rev_append l acc)
-        | (Error Not_available _ as res), _
-        | _, (Error Not_available _ as res) -> res
         | (Error _ as res), _
         | _, (Error _ as res) -> res
       in
@@ -469,39 +488,137 @@ and resolve_complex_deps db deps =
   in
   let res =
     match res with
-    | Ok l -> Ok (List.rev l)
+    | Ok    l -> Ok (List.rev l)
     | Error _ -> res
   in
-  (res, acc_Select)
+  (res, acc_select)
 
-and resolve_deps db deps =
+and resolve_deps db deps ~stack =
   match deps with
-  | Simple  names -> (resolve_simple_deps  db names, [])
-  | Complex names -> (resolve_complex_deps db names, [])
+  | Simple  names -> (resolve_simple_deps  db names ~stack, [])
+  | Complex names ->  resolve_complex_deps db names ~stack
 
-let deps_exn deps ~required_by =
-  match deps with
-  | Ok x -> x
-  | Error e ->
-    raise (Error { data = e; required_by })
+and resolve_user_deps db deps ~pps ~stack =
+  let deps, resolved_select = resolve_deps db deps ~stack ~stack in
+  let deps =
+    match info.pps with
+    | [] -> deps
+    | pps ->
+      deps >>= fun deps ->
+      resolve_simple_deps db pps ~stack >>= fun pps ->
+      fold_closure pps ~stack ~init:deps ~f:(fun t acc ->
+        ppx_runtime_deps t >>= fun rt_deps ->
+        Ok (List.rev_append rt_deps acc))
+  in
+  (deps, resolved_select)
 
-let requires t ~required_by =
-  deps_exn (fst (Lazy.force t.requires)) ~required_by
+(* Fold the transitive closure in arbitrary order *)
+and fold_closure ts ~init ~f ~stack =
+  let seen = ref Int_set.empty in
+  let rec loop ts acc ~stack =
+    match ts with
+    | [] -> acc
+    | t :: ts ->
+      if Int_set.mem t.unique_id !seen then
+        Ok acc
+      else begin
+        seen := Int_set.add t.unique_id seen;
+        f t acc >>= fun acc ->
+        (Dep_stack.push stack (to_init t) >>= fun stack ->
+         t.requires >>= fun deps ->
+         loop deps acc ~stack)
+        >>= fun acc ->
+        loop ts acc ~stack
+      end
+  in
+  loop ts init ~stack
 
-let ppx_runtime_deps t ~required_by =
-  deps_exn (Lazy.force t.ppx_runtime_deps) ~required_by
+let to_exn res ~required_by =
+  match res with
+  | Ok    x -> x
+  | Error e -> raise (Error (With_required_by.append e required_by))
+
+let requires_exn t ~required_by =
+  to_exn t.requires ~required_by
+let ppx_runtime_deps_exn t ~required_by =
+  to_exn t.ppx_runtime_deps ~required_by
+
+(* +-----------------------------------------------------------------+
+   | Transitive closure                                              |
+   +-----------------------------------------------------------------+ *)
+
+module Closure =
+  Top_closure.Make
+    (String)
+    (struct
+      type graph = unit
+      type nonrec t = t * With_required_by.Entry.t list
+      let key (t, _) = t.name
+      let deps (t, required_by) () =
+        let required_by =
+          With_required_by.Entry.Library t.name :: required_by
+        in
+        List.map (requires pkg ~required_by) ~f:(fun x -> (x, required_by))
+    end)
+
+exception Conflict of Error.Conflict.t
+
+let check_conflicts ts ~required_by =
+  let add acc name t =
+    match String_map.find name acc with
+    | None -> String_map.add name ~key:acc ~data:t
+    | Some t' -> raise_notrace (Conflict { lib1 = t'; lib2 = t })
+  in
+  match
+    List.fold_left ts ~init:String_map.empty ~f:(fun acc t ->
+      List.fold_left (names (fst t)) ~init:acc
+        ~f:(fun acc name -> add acc name t))
+  with
+  | (_ : _ String_map.t) ->
+    Ok (List.map ts ~f:fst)
+  | exception (Conflict c) ->
+    Error { With_required_by.
+            data        = Conflict c
+          ; required_by = []
+          }
+
+let closure_cache = Hashtbl.create 1024
+
+let closure ts =
+  match pkgs with
+  | [] -> []
+  | _ ->
+    let key = List.map ts ~f:(fun p -> p.unique_id) in
+    Hashtbl.find_or_add closure_cache key ~f:(fun _ ->
+      let ts = List.map ts ~f:(fun t -> (t, [])) in
+      match Closure.top_closure () ts with
+      | Ok ts -> check_conflicts ts
+      | Error cycle ->
+        Error { With_required_by.
+                data        = Dependency_cycle cycle
+              ; required_by = []
+              }
+      | exception (Error e) -> Error e)
+
+let closure_exn ts ~required_by = to_exn (closure ts) ~required_by
+
+let dependencies_for_compiling t = t.requires >>= closure
+
+(* +-----------------------------------------------------------------+
+   | Databases                                                       |
+   +-----------------------------------------------------------------+ *)
 
 module DB = struct
   type t = db
 
   module Resolution_failure = Resolution_failure
 
-  let create ?parent ~resolve ~all () =
+  let create ?parent ~resolve ~all ?unique_name_suffix () =
     { parent
     ; resolve
-    ; resolve_cache = Hashtbl.create 1024
-    ; closure_cache = Hashtbl.create 1024
-    ; all = Lazy.from_fun all
+    ; table  = Hashtbl.create 1024
+    ; all    = Lazy.from_fun all
+    ; suffix = unique_name_suffix
     }
 
   let create_from_library_stanzas ?parent stanzas =
@@ -527,16 +644,23 @@ module DB = struct
         | Some info -> Ok info)
       ~all:(fun () -> String_map.keys map)
 
-  let mem = mem
-  let find = find
+  let find t name =
+    match find_internal t name ~stack:Dep_stack.empty with
+    | Ok    x -> Some x
+    | Error _ -> None
 
   let find_exn t name ~required_by =
-    match find t name with
-    | Ok x -> x
-    | Error na ->
-      raise (Error { data = Library_not_available na
-                   ; required_by
-                   })
+    to_exn (find_internal t name ~stack:Dep_stack.empty) ~required_by
+
+  let mem t name = mem t name ~stack:Dep_stack.empty
+
+  let resolve_user_written_deps t deps ~pps =
+    let res, resolved_select =
+      resolve_user_deps t (Info.Deps.of_lib_deps deps) ~pps
+        ~stack:Dep_stack.empty
+    in
+    let res = res >>= closure in
+    (res, resolved_select)
 
   let rec all ?(recursive=false) t =
     let l = List.map (Lazy.force t.all) ~f:(find_exn t ~required_by:[]) in
@@ -546,75 +670,33 @@ module DB = struct
 end
 
 (* +-----------------------------------------------------------------+
-   | Transitive closure                                              |
+   | META files                                                      |
    +-----------------------------------------------------------------+ *)
 
-module Closure =
-  Top_closure.Make
-    (String)
-    (struct
-      type graph = unit
-      type nonrec t = t * With_required_by.Entry.t list
-      let key (t, _) = t.name
-      let deps (t, required_by) () =
-        let required_by =
-          With_required_by.Entry.Library t.name :: required_by
-        in
-        List.map (requires pkg ~required_by) ~f:(fun x -> (x, required_by))
-    end)
+module Meta = struct
+  let to_names ts =
+    List.fold_left ts ~init:String_set.empty ~f:(fun acc t ->
+      String_set.add t.name acc)
 
-module Closure_cache = struct
-  (* A key is the list of package unique identifiers. *)
-  type t = (int list, (package list, Error.t) result) Hashtbl.t
+  (* For the deprecated method, we need to put all the runtime
+     dependencies of the transitive closure.
 
-  let create () = Hashtbl.create 128
+     We need to do this because [ocamlfind ocamlc -package ppx_foo]
+     will not look for the transitive dependencies of [foo], and the
+     runtime dependencies might be attached to a dependency of [foo]
+     rather than [foo] itself.
+
+     Sigh... *)
+  let ppx_runtime_deps_for_deprecated_method t ~required_by =
+    closure_exn [t] ~required_by
+    |> List.concat_map ~f:(ppx_runtime_deps_exn ~required_by)
+    |> to_names
+
+  let requires t ~required_by =
+    to_names (requires_exn t ~required_by)
+  let ppx_runtime_deps t ~required_by =
+    to_names (ppx_runtime_deps_exn t ~required_by)
 end
-
-exception Conflict of Error.Conflict.t
-
-let check_conflicts ts ~required_by =
-  let add acc name t =
-    match String_map.find name acc with
-    | None -> String_map.add name ~key:acc ~data:t
-    | Some t' -> raise_notrace (Conflict { lib1 = t'; lib2 = t })
-  in
-  match
-    List.fold_left ts ~init:String_map.empty ~f:(fun acc t ->
-      List.fold_left (names (fst t)) ~init:acc
-        ~f:(fun acc name -> add acc name t))
-  with
-  | (_ : _ String_map.t) ->
-    Ok (List.map ts ~f:fst)
-  | exception (Conflict c) ->
-    Error { With_required_by.
-            data        = Conflict c
-          ; required_by = []
-          }
-
-let closure ts ~cache ~required_by =
-  match pkgs with
-  | [] -> []
-  | _ ->
-    let key = List.map ts ~f:(fun p -> p.unique_id) in
-    match
-      Hashtbl.find_or_add t.closure_cache key ~f:(fun _ ->
-        let ts = List.map ts ~f:(fun t -> (t, [])) in
-        match Closure.top_closure () ts with
-        | Ok ts -> check_conflicts ts
-        | Error cycle -> Error { With_required_by.
-                                 data        = Dependency_cycle cycle
-                               ; required_by = []
-                               }
-        | exception (Error e) -> Error e)
-    with
-    | Ok ts -> ts
-    | Error e ->
-      raise (Error { e with required_by = e.required_by @ required_by })
-
-let closed_ppx_runtime_deps_of ts ~cache ~required_by =
-  closure ts ~cache ~required_by
-  |> List.concat_map ~f:(ppx_runtime_deps ~required_by)
-  |> closure ~cache ~required_by
 
 (* let describe = function
  *   | Internal (_, lib) ->

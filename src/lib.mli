@@ -16,6 +16,10 @@ val names : t -> string list
     the current process. *)
 val unique_id : t -> int
 
+(** A unique way to refer to this library. Note that [unique_name t]
+    is not part of [names t] *)
+val unique_name : t -> string
+
 (* CR-someday diml: this should be [Path.t list], since some libraries
    have multiple source directories because of [copy_files]. *)
 (** Directory where the source files for the library are located. *)
@@ -33,6 +37,11 @@ val archives     : t -> Path.t list Mode.Dict.t
 val plugins      : t -> Path.t list Mode.Dict.t
 val jsoo_runtime : t -> string list
 
+(** Return the list of dependencies needed for compiling this library *)
+val dependencies_for_compiling
+  :  t
+  -> (t list, Error.t With_required_by.t) result
+
 module Resolved_select = struct
   module No_solution_found : sig
     type t =
@@ -45,7 +54,7 @@ module Resolved_select = struct
     }
 end
 
-(** Resolved dependencies *)
+(** Resolved select forms *)
 val resolved_selects
   :  t
   -> required_by:With_required_by.Entry.t list Dep.t list
@@ -98,7 +107,7 @@ module Info : sig
     ; jsoo_runtime     : string list
     ; requires         : Deps.t
     ; ppx_runtime_deps : string list
-    ; ppx_used         : string list
+    ; pps              : string list
     ; optional         : bool
     }
 
@@ -160,6 +169,7 @@ module DB : sig
     :  ?parent:t
     -> resolve:(string -> (Info.t, Error.Library_not_available.Reason.t) result)
     -> all:(unit -> string list)
+    -> ?unique_name_suffix:string
     -> unit
     -> t
 
@@ -169,10 +179,7 @@ module DB : sig
     -> (Path.t * Jbuild.Library.t) list
     -> t
 
-  val find
-    :  t
-    -> string
-    -> (lib, Error.Library_not_available.Reason.t) result
+  val find : t -> string -> lib option
   val find_exn
     :  t
     -> string
@@ -181,55 +188,39 @@ module DB : sig
 
   val mem : t -> string -> bool
 
+  (** Resolve libraries written by the user in a jbuild file. The
+      resulting list of libraries is transitively closed and sorted by
+      order of dependencies. *)
+  val resolve_user_written_deps
+    :  t
+    -> Jbuild.Lib_dep.t list
+    -> pps:string list
+    -> (lib list, Error.t With_required_by.t) result * Resolved_select.t list
+
   (** Return the list of all libraries in this database. If
       [recursive] is true, also include libraries in parent databases
       recursively. *)
   val all : ?recursive:bool -> t -> lib list
 end with type lib := t
 
-(** {1 Dependencies specified by the user} *)
+(** {1 Dependencies for META files} *)
 
-(** These are what is written in the jbuild or META file, not the
-    transitive closure *)
+module Meta : sig
+  val requires
+    :  t
+    -> required_by:With_required_by.Entry.t list
+    -> String_set.t
 
-val requires
-  :  t
-  -> required_by:With_required_by.Entry.t list
-  -> t list
+  val ppx_runtime_deps
+    :  t
+    -> required_by:With_required_by.Entry.t list
+    -> String_set.t
 
-val ppx_runtime_deps
-  :  t
-  -> required_by:With_required_by.Entry.t list
-  -> t list
-
-(** {1 Transitive closure} *)
-
-module Closure_cache : sig
-  type t
-  val create : unit -> t
+  val ppx_runtime_deps_for_deprecated_method
+    :  t
+    -> required_by:With_required_by.Entry.t list
+    -> String_set.t
 end
-
-(** Take the transitive closure of a list of libraries:
-
-    - the resulting list contains all the given libraries and their
-    dependencies recursively
-
-    - the resulting list is sorted in such a way that if a library [a]
-    depends on a library [b], then [b] will come first *)
-val closure
-  :  t list
-  -> cache:Closure_cache.t
-  -> required_by:With_required_by.Entry.t list
-  -> t list
-
-(** Return all the ppx runtime dependencies for the given list of
-    libraries and their dependencies, sorted in the same way as
-    [closure] *)
-val closed_ppx_runtime_deps_of
-  :  t list
-  -> cache:Closure_cache.t
-  -> required_by:With_required_by.Entry.t list
-  -> t list
 
 (* val public_name : t -> string option
  * type local = { src: Path.t ; name: string }

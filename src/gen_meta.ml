@@ -35,10 +35,7 @@ end
 type item =
     Lib of Lib_db.Scope.t With_required_by.t * Pub_name.t * Library.t
 
-let string_of_deps l =
-  List.map l ~f:Lib.name
-  |> List.sort l ~cmp:String.compare
-  |> String.concat ~sep:" "
+let string_of_deps deps = String_set.to_list deps |> String.concat ~sep:" "
 
 let rule var predicates action value =
   Rule { var; predicates; action; value }
@@ -62,7 +59,7 @@ let archives ?(preds=[]) lib =
   ; plugin  (preds @ [Pos "native"]) (make plugins .native)
   ]
 
-let gen_lib pub_name lib ~closure_cache ~required_by ~version =
+let gen_lib pub_name lib ~required_by ~version =
   let desc =
     match Lib.synopsis lib with
     | Some s -> s
@@ -80,8 +77,8 @@ let gen_lib pub_name lib ~closure_cache ~required_by ~version =
     | Normal -> []
     | Ppx_rewriter | Ppx_deriver -> [Pos "ppx_driver"]
   in
-  let lib_deps = Lib.requires lib ~required_by in
-  let ppx_rt_deps = Lib.ppx_runtime_deps lib ~required_by in
+  let lib_deps    = Lib.Meta.requires lib ~required_by in
+  let ppx_rt_deps = Lib.Meta.ppx_runtime_deps lib ~required_by in
   List.concat
     [ version
     ; [ description desc
@@ -106,20 +103,8 @@ let gen_lib pub_name lib ~closure_cache ~required_by ~version =
                         preprocessors"
              ; Comment "and normal dependencies"
              ; requires ~preds:[no_ppx_driver]
-                 (* For the deprecated method, we need to put the
-                    transitive closure of the ppx runtime
-                    dependencies.
-
-                    We need to do this because [ocamlfind ocamlc
-                    -package ppx_foo] will not look for the transitive
-                    dependencies of [foo], and the runtime
-                    dependencies might be attached to a dependency of
-                    [foo] rather than [foo] itself.
-
-                    Sigh...  *)
-                 (Lib.closed_ppx_runtime_deps_of (lib :: lib_deps)
-                    ~required_by
-                    ~closure_cache)
+                 (Lib.Meta.ppx_runtime_deps_for_deprecated_method lib
+                    ~required_by)
              ]
            ; match Lib.kind lib with
            | Normal -> assert false
@@ -158,29 +143,9 @@ let gen ~package ~version ~meta_path libs =
   in
   let pkgs =
     List.map libs ~f:(fun lib ->
-      let lib_deps = Lib_db.Scope.best_lib_dep_names_exn scope
-                       lib.buildable.libraries in
-      let lib_deps =
-        match Preprocess_map.pps lib.buildable.preprocess with
-        | [] -> lib_deps
-        | pps ->
-          lib_deps @
-          String_set.elements
-            (Lib_db.Scope.all_ppx_runtime_deps_exn scope (List.map pps ~f:Lib_dep.of_pp))
-      in
-      let ppx_runtime_deps =
-        Lib_db.Scope.best_lib_dep_names_exn scope
-          (List.map lib.ppx_runtime_libraries ~f:Lib_dep.direct)
-      in
-      let ppx_runtime_deps_for_deprecated_method = lazy (
-        String_set.union
-          (String_set.of_list ppx_runtime_deps)
-          (Lib_db.Scope.all_ppx_runtime_deps_exn scope lib.buildable.libraries)
-        |> String_set.elements)
-      in
+      let pub_name = Pub_name.parse (Lib.name lib) in
       (pub_name,
-       gen_lib pub_name lib ~lib_deps ~ppx_runtime_deps ~version
-         ~ppx_runtime_deps_for_deprecated_method))
+       gen_lib lib ~version ~required_by))
   in
   let pkgs =
     List.map pkgs ~f:(fun (pn, meta) ->
