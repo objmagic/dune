@@ -1,9 +1,9 @@
 open Import
 
+(** {1 Generals} *)
+
 (** Representation of a library *)
 type t
-
-(** {1 Generals} *)
 
 (** For libraries defined in the workspace, this is the [public_name] if
     present or the [name] if not. *)
@@ -37,29 +37,6 @@ val archives     : t -> Path.t list Mode.Dict.t
 val plugins      : t -> Path.t list Mode.Dict.t
 val jsoo_runtime : t -> string list
 
-(** Return the list of dependencies needed for compiling this library *)
-val dependencies_for_compiling
-  :  t
-  -> (t list, Error.t With_required_by.t) result
-
-module Resolved_select = struct
-  module No_solution_found : sig
-    type t =
-      { select_form_loc : Loc.t }
-  end
-
-  type t =
-    { src_fn : (string, No_solution_found.t) result
-    ; dst_fn : string
-    }
-end
-
-(** Resolved select forms *)
-val resolved_selects
-  :  t
-  -> required_by:With_required_by.Entry.t list Dep.t list
-  -> Resolved_select.t list
-
 (** Operations on list of libraries *)
 module List : sig
   type nonrec t = t list
@@ -80,40 +57,7 @@ end
 
 val jsoo_archives : t -> Path.t list
 
-(** {1 Library name resolution} *)
-
-(** Information about a library *)
-module Info : sig
-  module Deps : sig
-    type t =
-      | Simple  of string list
-      | Complex of Jbuild.Lib_dep.t list
-  end
-
-  (** Raw description of a library, where dependencies are not
-      resolved. *)
-  type t =
-    { loc              : Loc.t
-    ; name             : string
-    ; other_names      : string list
-    ; kind             : Jbuild.Library.Kind.t
-    ; src_dir          : Path.t
-    ; obj_dir          : Path.t
-    ; version          : string option
-    ; synopsis         : string option
-    ; archives         : Path.t list Mode.Dict.t
-    ; plugins          : Path.t list Mode.Dict.t
-    ; stubs            : string option
-    ; jsoo_runtime     : string list
-    ; requires         : Deps.t
-    ; ppx_runtime_deps : string list
-    ; pps              : string list
-    ; optional         : bool
-    }
-
-  (** Construct a [t] from a library stanza. *)
-  val of_library_stanza : dir:Path.t -> Jbuild.Library.t -> t
-end
+(** {1 Errors} *)
 
 module Error : sig
   module Library_not_available : sig
@@ -149,6 +93,64 @@ module Error : sig
 end
 
 exception Error of Error.t With_required_by.t
+
+(** {1 Library compilation} *)
+
+(** For compiling the library itself *)
+module Compile : sig
+  (** Return the list of dependencies needed for compiling this library *)
+  val requires
+    :  t
+    -> (List.t, Error.t With_required_by.t) result
+
+  module Resolved_select : sig
+    type t =
+      { src_fn : (string, Error.No_solution_found_for_select.t) result
+      ; dst_fn : string
+      }
+  end
+
+  (** Resolved select forms *)
+  val resolved_selects
+    :  t
+    -> required_by:With_required_by.Entry.t list Dep.t list
+    -> Resolved_select.t list
+end
+
+(** {1 Library name resolution} *)
+
+(** Information about a library *)
+module Info : sig
+  module Deps : sig
+    type t =
+      | Simple  of string list
+      | Complex of Jbuild.Lib_dep.t list
+  end
+
+  (** Raw description of a library, where dependencies are not
+      resolved. *)
+  type t =
+    { loc              : Loc.t
+    ; name             : string
+    ; other_names      : string list
+    ; kind             : Jbuild.Library.Kind.t
+    ; src_dir          : Path.t
+    ; obj_dir          : Path.t
+    ; version          : string option
+    ; synopsis         : string option
+    ; archives         : Path.t list Mode.Dict.t
+    ; plugins          : Path.t list Mode.Dict.t
+    ; stubs            : string option
+    ; jsoo_runtime     : string list
+    ; requires         : Deps.t
+    ; ppx_runtime_deps : string list
+    ; pps              : string list
+    ; optional         : bool
+    }
+
+  (** Construct a [t] from a library stanza. *)
+  val of_library_stanza : dir:Path.t -> Jbuild.Library.t -> t
+end
 
 (** Collection of libraries organized by names *)
 module DB : sig
@@ -190,12 +192,14 @@ module DB : sig
 
   (** Resolve libraries written by the user in a jbuild file. The
       resulting list of libraries is transitively closed and sorted by
-      order of dependencies. *)
+      order of dependencies.
+
+      This function is for executables stanzas.  *)
   val resolve_user_written_deps
     :  t
     -> Jbuild.Lib_dep.t list
     -> pps:string list
-    -> (lib list, Error.t With_required_by.t) result * Resolved_select.t list
+    -> (List.t, Error.t With_required_by.t) result * Resolved_select.t list
 
   (** Return the list of all libraries in this database. If
       [recursive] is true, also include libraries in parent databases

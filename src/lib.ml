@@ -103,13 +103,8 @@ module Error0 = struct
 end
 
 module Resolved_select = struct
-  module No_solution_found = struct
-    type t =
-      { select_form_loc : Loc.t }
-  end
-
   type t =
-    { src_fn : (string, No_solution_found.t) result
+    { src_fn : (string, Error0.No_solution_found_for_select.t) result
     ; dst_fn : string
     }
 end
@@ -205,8 +200,6 @@ let synopsis     t = t.synopsis
 let archives     t = t.archives
 let plugins      t = t.plugins
 let jsoo_runtime t = t.jsoo_runtime
-
-let resolved_select t = t.resolved_select
 
 let src_dir t = t.src_dir
 let obj_dir t = t.obj_dir
@@ -471,10 +464,8 @@ and resolve_complex_deps db deps ~stack =
             | Some (ts, file) ->
               (Ok ts, Ok file)
             | None ->
-              (Error (No_solution_found_for_select loc),
-               Error { Resolved_select.No_solution_found.
-                       select_form_loc = loc
-                     })
+              let e = { Error.No_solution_found_for_select.loc } in
+              (Error (No_solution_found_for_select e), Error e)
           in
           (res, { Resolved_select. src_fn; dst_fn = result_fn })
       in
@@ -602,7 +593,11 @@ let closure ts =
 
 let closure_exn ts ~required_by = to_exn (closure ts) ~required_by
 
-let dependencies_for_compiling t = t.requires >>= closure
+module Compile = struct
+  let requires t = t.requires >>= closure
+
+  let resolved_select t = t.resolved_select
+end
 
 (* +-----------------------------------------------------------------+
    | Databases                                                       |
