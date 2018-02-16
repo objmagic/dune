@@ -303,7 +303,10 @@ let all_unavailable_packages t =
   |> List.sort ~cmp:(fun (a, _) (b, _) -> String.compare a b)
 
 let stdlib_with_archives t =
-  let x = find_exn t ~required_by:[] "stdlib" in
+  let x =
+    match find t ~required_by:[] "stdlib" with
+    | 
+  in
   let archives =
     { Mode.Dict.byte   = Path.relative x.dir "stdlib.cma"  :: x.archives.byte
     ; Mode.Dict.native = Path.relative x.dir "stdlib.cmxa" :: x.archives.native
