@@ -314,16 +314,6 @@ module Dep_stack = struct
     ; seen  = Int_set.empty
     }
 
-  let to_requires_by stack =
-    List.map stack ~f:(fun { Init.path; name; _ } ->
-      With_required_by.Entry.Library (path, name))
-
-  let to_with_required_by t data =
-    { With_required_by.
-      data
-    ; required_by = to_requires_by t.stack
-    }
-
   let dependency_cycle t (last : Init.t) =
     assert (Int_set.mem last.unique_id t.seen);
     let rec build_loop acc stack =
@@ -469,7 +459,7 @@ and resolve_name db name ~stack =
         let res' = find db name in
         match res' with
         | Ok _ -> res'
-        | Error reason' ->
+        | Error _ ->
           if reason = Not_found then
             res'
           else

@@ -1,5 +1,4 @@
 open Import
-open Jbuild
 open Meta
 
 module Pub_name = struct

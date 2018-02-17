@@ -4,7 +4,7 @@ BIN := ./_build/default/bin/main.exe
 -include Makefile.dev
 
 x:
-	jbuilder build
+	jbuilder runtest --dev
 
 default: boot.exe
 	./boot.exe --dev

@@ -107,10 +107,6 @@ let describe_target fn =
   | Other fn ->
     Path.to_string_maybe_quoted fn
 
-type library_or_executables =
-  | Library     of string
-  | Executables of string list
-
 let library_object_directory ~dir name =
   Path.relative dir ("." ^ name ^ ".objs")
 

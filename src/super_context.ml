@@ -232,11 +232,6 @@ let source_files t ~src_path =
 module Libs = struct
   open Build.O
 
-  let with_fail ~fail build =
-    match fail with
-    | None -> build
-    | Some f -> Build.fail f >>> build
-
   let requires_to_build requires ~required_by =
     match requires with
     | Ok x -> Build.return x
@@ -777,7 +772,7 @@ module PP = struct
       |> Libs.requires_to_build ~required_by:[Preprocess (pps :> string list)]
     in
     let libs =
-      Build.record_lib_deps dep_kind (List.map pps ~f:Lib_dep.of_pp)
+      Build.record_lib_deps ~kind:dep_kind (List.map pps ~f:Lib_dep.of_pp)
       >>>
       libs
     in

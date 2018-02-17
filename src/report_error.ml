@@ -2,13 +2,6 @@ open Import
 
 let map_fname = ref (fun x -> x)
 
-let pp_required_by ppf required_by =
-  Format.fprintf ppf "@[<v>%a@]"
-    (Format.pp_print_list
-       (fun ppf x ->
-          Format.fprintf ppf "-> required by %a" With_required_by.Entry.pp x))
-    required_by
-
 let reporters = ref []
 let register f = reporters := f :: !reporters
 

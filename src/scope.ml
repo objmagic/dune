@@ -53,7 +53,7 @@ module DB = struct
       |> Scope_name_map.of_alist
       |> function
       | Ok x -> x
-      | Error (name, scope1, scope2) ->
+      | Error (_name, scope1, scope2) ->
         let to_sexp (scope : Jbuild.Scope_info.t) =
           Sexp.To_sexp.(pair (option string) Path.sexp_of_t)
             (scope.name, scope.root)
@@ -71,7 +71,7 @@ module DB = struct
     in
     let by_name =
       Scope_name_map.merge scopes_info_by_name libs_by_scope_name
-        ~f:(fun name info libs ->
+        ~f:(fun _name info libs ->
           let info = Option.value_exn info         in
           let libs = Option.value libs ~default:[] in
           let db =
@@ -82,7 +82,7 @@ module DB = struct
           Some { info; db })
     in
     let by_dir = Hashtbl.create 1024 in
-    Scope_name_map.iter by_name ~f:(fun ~key:name ~data:scope ->
+    Scope_name_map.iter by_name ~f:(fun ~key:_name ~data:scope ->
       Hashtbl.add by_dir ~key:scope.info.root ~data:scope);
     { by_name; by_dir; context }
 end
