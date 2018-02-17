@@ -52,12 +52,7 @@ let dot_merlin sctx ~dir ~scope ({ requires; flags; _ } as t) =
           List.fold_left ~f:(fun acc (lib : Lib.t) ->
             let serialize_path = Path.reach ~from:remaindir in
             let bpath = serialize_path (Lib.obj_dir lib) in
-            let spath =
-              match Lib.src_dir lib with
-              | None -> bpath
-              | Some dir ->
-                serialize_path (Path.drop_optional_build_context dir)
-            in
+            let spath = serialize_path (Lib.src_dir lib) in
             ("B " ^ bpath) :: ("S " ^ spath) :: acc
           ) libs ~init:[]
         in
@@ -104,7 +99,7 @@ let merge_two a b =
   { requires =
       (Build.fanout a.requires b.requires
        >>^ fun (x, y) ->
-       Lib.remove_dups_preserve_order (x @ y))
+       Lib.L.remove_dups (x @ y))
   ; flags = a.flags &&& b.flags >>^ (fun (a, b) -> a @ b)
   ; preprocess =
       if a.preprocess = b.preprocess then

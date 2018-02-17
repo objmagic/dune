@@ -78,6 +78,10 @@ module Scope_info = struct
 
     let compare : t -> t -> int = compare
 
+    let of_string = function
+      | "" -> None
+      | s  -> Some s
+
     let to_string = function
       | None -> ""
       | Some "" -> assert false
@@ -90,14 +94,14 @@ module Scope_info = struct
     ; root     : Path.t
     }
 
-  let empty =
+  let anonymous =
     { name     = None
     ; packages = String_map.empty
     ; root     = Path.root
     }
 
   let make = function
-    | [] -> empty
+    | [] -> anonymous
     | pkg :: rest as pkgs ->
       let name =
         List.fold_left rest ~init:pkg.Package.name ~f:(fun acc pkg ->
@@ -173,7 +177,7 @@ end
 
 
 module Pp : sig
-  type t
+  type t = private string
   val of_string : string -> t
   val to_string : t -> string
   val compare : t -> t -> int

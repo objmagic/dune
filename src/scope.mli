@@ -8,6 +8,7 @@ type t
 
 val root : t -> Path.t
 val name : t -> string option
+val info : t -> Jbuild.Scope_info.t
 
 (** Return the library database associated to this scope *)
 val libs : t -> Lib.DB.t

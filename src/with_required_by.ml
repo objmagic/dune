@@ -6,6 +6,7 @@ module Entry = struct
     | Alias of Path.t
     | Library of Path.t * string
     | Preprocess of string list
+    | Loc of Loc.t
 
   let jbuild_file_in ~dir = Path (Utils.jbuild_file_in ~dir)
 
@@ -16,14 +17,27 @@ module Entry = struct
       sprintf "library %S in %s" lib_name (Path.to_string_maybe_quoted path)
     | Preprocess l ->
       Sexp.to_string (List [Atom "pps"; Sexp.To_sexp.(list string) l])
+    | Loc loc ->
+      Loc.to_file_colon_line loc
 
   let pp ppf x =
     Format.pp_print_string ppf (to_string x)
 end
 
+module Entries = struct
+  type t = Entry.t list
+
+  let pp ppf t =
+    Format.fprintf ppf "@[<v>%a@]"
+      (Format.pp_print_list
+         (fun ppf x ->
+            Format.fprintf ppf "-> required by %a" Entry.pp x))
+      t
+end
+
 type 'a t =
   { data : 'a
-  ; required_by : Entry.t list
+  ; required_by : Entries.t
   }
 
 let prepend_one t entry = { t with required_by = entry :: t.required_by }

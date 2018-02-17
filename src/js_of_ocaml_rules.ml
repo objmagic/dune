@@ -19,7 +19,8 @@ let in_build_dir ~ctx =
 
 let runtime_file ~sctx ~dir fname =
   match
-    Artifacts.file_of_lib (SC.artifacts sctx) ~from:dir
+    Artifacts.file_of_lib (SC.artifacts sctx)
+      ~loc:(Loc.in_file (Utils.jbuild_file_in ~dir |> Path.to_string))
       ~lib:"js_of_ocaml-compiler" ~file:fname
   with
   | Error _ ->
@@ -42,7 +43,8 @@ let js_of_ocaml_rule ~sctx ~dir ~flags ~spec ~target =
 let standalone_runtime_rule ~sctx ~dir ~javascript_files ~target =
   let spec =
     Arg_spec.S
-      [ Arg_spec.Dyn (fun ((libs,_),_) -> Arg_spec.Deps (Lib.jsoo_runtime_files libs))
+      [ Arg_spec.Dyn (fun ((libs,_),_) ->
+          Arg_spec.Deps (Lib.L.jsoo_runtime_files libs))
       ; Arg_spec.Deps javascript_files
       ]
   in
@@ -53,7 +55,8 @@ let standalone_runtime_rule ~sctx ~dir ~javascript_files ~target =
 let exe_rule ~sctx ~dir ~javascript_files ~src ~target =
   let spec =
     Arg_spec.S
-      [ Arg_spec.Dyn (fun ((libs,_),_) -> Arg_spec.Deps (Lib.jsoo_runtime_files libs))
+      [ Arg_spec.Dyn (fun ((libs,_),_) ->
+          Arg_spec.Deps (Lib.L.jsoo_runtime_files libs))
       ; Arg_spec.Deps javascript_files
       ; Arg_spec.Dep src
       ]
@@ -116,10 +119,10 @@ let setup_separate_compilation_rules sctx components =
     | [] | _ :: _ :: _ -> ()
     | [pkg] ->
       let ctx = SC.context sctx in
-      match Lib.DB.find (Lib.installed_libs sctx) pkg with
+      match Lib.DB.find (SC.installed_libs sctx) pkg with
       | Error _ -> ()
       | Ok pkg ->
-        let archives = Lib.archives pkg Byte in
+        let archives = jsoo_archives pkg in
         let archives =
           (* Special case for the stdlib because it is not referenced
              in the META *)
@@ -129,7 +132,7 @@ let setup_separate_compilation_rules sctx components =
         in
         List.iter archives ~f:(fun fn ->
           let name = Path.basename fn in
-          let src = Path.relative (Lib.dir pkg) name in
+          let src = Path.relative (Lib.src_dir pkg) name in
           let target =
             in_build_dir ~ctx [ Lib.name pkg; sprintf "%s.js" name]
           in

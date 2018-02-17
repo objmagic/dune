@@ -32,10 +32,7 @@ module Pub_name = struct
   let to_string t = String.concat ~sep:"." (to_list t)
 end
 
-type item =
-    Lib of Lib_db.Scope.t With_required_by.t * Pub_name.t * Library.t
-
-let string_of_deps deps = String_set.to_list deps |> String.concat ~sep:" "
+let string_of_deps deps = String_set.elements deps |> String.concat ~sep:" "
 
 let rule var predicates action value =
   Rule { var; predicates; action; value }
@@ -85,14 +82,14 @@ let gen_lib pub_name lib ~required_by ~version =
       ; requires ~preds lib_deps
       ]
     ; archives ~preds lib
-    ; (match ppx_rt_deps with
-       | [] -> []
-       | _ ->
-         [ Comment "This is what jbuilder uses to find out the runtime \
-                    dependencies of"
-         ; Comment "a preprocessor"
-         ; ppx_runtime_deps ppx_rt_deps
-         ])
+    ; if String_set.is_empty ppx_rt_deps then
+        []
+      else
+        [ Comment "This is what jbuilder uses to find out the runtime \
+                   dependencies of"
+        ; Comment "a preprocessor"
+        ; ppx_runtime_deps ppx_rt_deps
+        ]
     ; (match Lib.kind lib with
        | Normal -> []
        | Ppx_rewriter | Ppx_deriver ->
@@ -123,13 +120,11 @@ let gen_lib pub_name lib ~required_by ~version =
        | [] -> []
        | l  ->
          let root = Pub_name.root pub_name in
+         let l = List.map l ~f:Path.basename in
          [ rule "linkopts" [Pos "javascript"] Set
-             (List.map l ~f:(fun fn ->
-                sprintf "+%s/%s" root (Filename.basename fn))
-              |> String.concat ~sep:" ")
+             (List.map l ~f:(sprintf "+%s/%s" root) |> String.concat ~sep:" ")
          ; rule "jsoo_runtime" [] Set
-             (List.map l ~f:Filename.basename
-              |> String.concat ~sep:" ")
+             (String.concat l ~sep:" ")
          ]
       )
     ]
@@ -145,7 +140,7 @@ let gen ~package ~version ~meta_path libs =
     List.map libs ~f:(fun lib ->
       let pub_name = Pub_name.parse (Lib.name lib) in
       (pub_name,
-       gen_lib lib ~version ~required_by))
+       gen_lib pub_name lib ~version ~required_by))
   in
   let pkgs =
     List.map pkgs ~f:(fun (pn, meta) ->

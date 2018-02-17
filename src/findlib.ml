@@ -126,14 +126,16 @@ module Package = struct
 
   let preds = Ps.of_list [P.ppx_driver; P.mt; P.mt_posix]
 
+  let get_paths t var preds =
+    List.map (Vars.get_words t.vars var preds) ~f:(Path.relative t.dir)
+
   let make_archives t var preds =
     Mode.Dict.of_func (fun ~mode ->
-      List.map (Vars.get_words t.vars var (Ps.add (Mode.variant mode) preds))
-        ~f:(Path.relative t.dir))
+      get_paths t var (Ps.add (Mode.variant mode) preds))
 
   let version          t = Vars.get       t.vars "version"          Ps.empty
   let description      t = Vars.get       t.vars "description"      Ps.empty
-  let jsoo_runtime     t = Vars.get_words t.vars "jsoo_runtime"     Ps.empty
+  let jsoo_runtime     t = get_paths      t      "jsoo_runtime"     Ps.empty
   let requires         t = Vars.get_words t.vars "requires"         preds
   let ppx_runtime_deps t = Vars.get_words t.vars "ppx_runtime_deps" preds
 
@@ -148,6 +150,13 @@ module Unavailable_reason = struct
   type t =
     | Not_found
     | Hidden of Path.t * string
+
+  let explain ppf ~lib_name t =
+    Format.fprintf ppf "%S %s" lib_name
+      (match t with
+       | Not_found  -> "not found"
+       | Hidden (path, msg) ->
+         sprintf "in %s is hidden (%s)" (Path.to_string_maybe_quoted path) msg)
 end
 
 type t =
@@ -259,6 +268,11 @@ let find t name =
       let res = Error Unavailable_reason.Not_found in
       Hashtbl.add t.packages ~key:name ~data:res;
       res
+
+let mem t name =
+  match find t name with
+  | Ok    _ -> true
+  | Error _ -> false
 
 let root_packages t =
   let pkgs =

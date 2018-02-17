@@ -18,6 +18,7 @@ module Scope_info : sig
 
     val compare : t -> t -> int
 
+    val of_string : string -> t
     val to_string : t -> string
   end
 
@@ -43,7 +44,7 @@ end
 
 (** Ppx preprocessors  *)
 module Pp : sig
-  type t
+  type t = private string
   val of_string : string -> t
   val to_string : t -> string
 end

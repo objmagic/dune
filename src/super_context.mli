@@ -14,7 +14,7 @@ module Dir_with_jbuild : sig
     { src_dir : Path.t
     ; ctx_dir : Path.t (** [_build/context-name/src_dir] *)
     ; stanzas : Stanzas.t
-    ; scope   : Scope.t With_required_by.t
+    ; scope   : Scope.t
     }
 end
 
@@ -23,7 +23,7 @@ type t
 val create
   :  context:Context.t
   -> ?host:t
-  -> scopes:Scope.t list
+  -> scopes:Scope_info.t list
   -> file_tree:File_tree.t
   -> packages:Package.t String_map.t
   -> stanzas:(Path.t * Scope_info.t * Stanzas.t) list
@@ -36,7 +36,7 @@ val stanzas   : t -> Dir_with_jbuild.t list
 val packages  : t -> Package.t String_map.t
 val file_tree : t -> File_tree.t
 val artifacts : t -> Artifacts.t
-val stanzas_to_consider_for_install : t -> (Path.t * Stanza.t) list
+val stanzas_to_consider_for_install : t -> (Path.t * Scope.t * Stanza.t) list
 val cxx_flags : t -> string list
 
 (** All public libraries of the workspace *)
@@ -117,17 +117,17 @@ module Libs : sig
   val requires_for_library
     :  t
     -> dir:Path.t
-    -> scope:Scope.t With_required_by.t
+    -> scope:Scope.t
     -> dep_kind:Build.lib_dep_kind
     -> Jbuild.Library.t
-    -> (unit, Lib.List.t) Build.t * (unit, Lib.List.t) Build.t
+    -> (unit, Lib.L.t) Build.t * (unit, Lib.L.t) Build.t
   val requires_for_executables
     :  t
     -> dir:Path.t
-    -> scope:Scope.t With_required_by.t
+    -> scope:Scope.t
     -> dep_kind:Build.lib_dep_kind
     -> Jbuild.Executables.t
-    -> (unit, Lib.List.t) Build.t * (unit, Lib.List.t) Build.t
+    -> (unit, Lib.L.t) Build.t * (unit, Lib.L.t) Build.t
 
   (** [file_deps ~ext] is an arrow that record dependencies on all the
       files with extension [ext] of the libraries given as input. *)
@@ -192,7 +192,7 @@ module Action : sig
     -> dir:Path.t
     -> dep_kind:Build.lib_dep_kind
     -> targets:targets
-    -> scope:Scope.t With_required_by.t
+    -> scope:Scope.t
     -> (Path.t list, Action.t) Build.t
 end
 
@@ -209,13 +209,13 @@ module PP : sig
     -> preprocess:Preprocess_map.t
     -> preprocessor_deps:Dep_conf.t list
     -> lib_name:string option
-    -> scope:Scope.t With_required_by.t
+    -> scope:Scope.t
     -> Module.t String_map.t
 
   (** Get a path to a cached ppx driver *)
   val get_ppx_driver
     : t
-    -> scope:Scope.t With_required_by.t
+    -> scope:Scope.t
     -> Pp.t list
     -> Path.t
 

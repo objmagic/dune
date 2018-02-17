@@ -31,6 +31,8 @@ module Jbuilds = struct
     | Local path -> Path.Local.ensure_parent_directory_exists path
     | External _ -> ()
 
+  type requires = No_requires | Unix
+
   let extract_requires ~fname str =
     let rec loop n lines acc =
       match lines with
@@ -42,7 +44,7 @@ module Jbuilds = struct
           | s ->
             match String.split s ~on:',' with
             | [] -> acc
-            | ["unix"] as l -> l
+            | ["unix"] -> Unix
             | _ ->
               let start =
                 { Lexing.
@@ -59,7 +61,7 @@ module Jbuilds = struct
         in
         loop (n + 1) lines acc
     in
-    loop 1 (String.split str ~on:'\n') []
+    loop 1 (String.split str ~on:'\n') No_requires
 
   let create_plugin_wrapper (context : Context.t) ~exec_dir ~plugin ~wrapper ~target =
     let plugin = Path.to_string plugin in
@@ -119,26 +121,15 @@ end
           ~target:generated_jbuild
       in
       let context = Option.value context.for_host ~default:context in
-      let pkgs =
-        let required_by = [With_required_by.Entry.jbuild_file_in ~dir] in
-        List.map requires ~f:(Findlib.find_exn context.findlib ~required_by)
-        |> Findlib.closure ~required_by ~local_public_libs:String_map.empty
-      in
-      let includes =
-        List.fold_left pkgs ~init:Path.Set.empty ~f:(fun acc pkg ->
-          Path.Set.add (Findlib.Package.dir pkg) acc)
-        |> Path.Set.elements
-        |> List.concat_map ~f:(fun path ->
-          [ "-I"; Path.to_string path ])
-      in
       let cmas =
-        List.concat_map pkgs ~f:(fun pkg -> Findlib.Package.archives pkg Byte)
+        match requires with
+        | No_requires -> []
+        | Unix        -> ["unix.cma"]
       in
       let args =
         List.concat
           [ [ "-I"; "+compiler-libs" ]
-          ; includes
-          ; List.map cmas ~f:(Path.reach ~from:dir)
+          ; cmas
           ; [ Path.to_absolute_filename wrapper ]
           ]
       in
@@ -249,7 +240,7 @@ let load ?extra_ignored_subtrees ?(ignore_promoted_rules=false) () =
           walk dir jbuilds scope)
     end
   in
-  let jbuilds = walk (File_tree.root ftree) [] Scope_info.empty in
+  let jbuilds = walk (File_tree.root ftree) [] Scope_info.anonymous in
   { file_tree = ftree
   ; jbuilds = { jbuilds; ignore_promoted_rules }
   ; packages

@@ -27,7 +27,7 @@ module Package : sig
   val description      : t -> string option
   val archives         : t -> Path.t list Mode.Dict.t
   val plugins          : t -> Path.t list Mode.Dict.t
-  val jsoo_runtime     : t -> string list
+  val jsoo_runtime     : t -> Path.t list
   val requires         : t -> string list
   val ppx_runtime_deps : t -> string list
 end
@@ -36,10 +36,14 @@ module Unavailable_reason : sig
   type t =
     | Not_found
     | Hidden of Path.t * string
+
+  val explain : Format.formatter -> lib_name:string -> t -> unit
 end
 
 (** Lookup a package in the given database *)
 val find : t -> string -> (Package.t, Unavailable_reason.t) result
+
+val mem : t -> string -> bool
 
 (** List all the packages available in this Database *)
 val all_packages  : t -> Package.t list

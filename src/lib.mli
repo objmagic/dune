@@ -27,10 +27,10 @@ val synopsis     : t -> string option
 val kind         : t -> Jbuild.Library.Kind.t
 val archives     : t -> Path.t list Mode.Dict.t
 val plugins      : t -> Path.t list Mode.Dict.t
-val jsoo_runtime : t -> string list
+val jsoo_runtime : t -> Path.t list
 
 (** Operations on list of libraries *)
-module List : sig
+module L : sig
   type nonrec t = t list
 
   val include_paths : t -> stdlib_dir:Path.t -> Path.Set.t
@@ -45,6 +45,8 @@ module List : sig
   val archive_files : t -> mode:Mode.t -> ext_lib:string -> Path.t list
 
   val jsoo_runtime_files : t -> Path.t list
+
+  val remove_dups : t -> t
 end
 
 (** {1 Errors} *)
@@ -85,9 +87,7 @@ exception Error of Error.t With_required_by.t
 (** For compiling the library itself *)
 module Compile : sig
   (** Return the list of dependencies needed for compiling this library *)
-  val requires
-    :  t
-    -> (List.t, Error.t With_required_by.t) result
+  val requires : t -> (L.t, Error.t With_required_by.t) result
 
   module Resolved_select : sig
     type t =
@@ -97,10 +97,7 @@ module Compile : sig
   end
 
   (** Resolved select forms *)
-  val resolved_selects
-    :  t
-    -> required_by:With_required_by.Entry.t list
-    -> Resolved_select.t list
+  val resolved_selects : t -> Resolved_select.t list
 end
 
 (** {1 Library name resolution} *)
@@ -126,8 +123,8 @@ module Info : sig
     ; synopsis         : string option
     ; archives         : Path.t list Mode.Dict.t
     ; plugins          : Path.t list Mode.Dict.t
-    ; stubs            : string option
-    ; jsoo_runtime     : string list
+    ; stubs            : Path.t option
+    ; jsoo_runtime     : Path.t list
     ; requires         : Deps.t
     ; ppx_runtime_deps : string list
     ; pps              : Jbuild.Pp.t list
@@ -182,7 +179,7 @@ module DB : sig
 
   val create_from_findlib : Findlib.t -> t
 
-  val find : t -> string -> lib option
+  val find : t -> string -> (lib, Error.Library_not_available.Reason.t) result
   val find_exn
     :  t
     -> string
@@ -200,8 +197,13 @@ module DB : sig
     :  t
     -> Jbuild.Lib_dep.t list
     -> pps:Jbuild.Pp.t list
-    -> (List.t, Error.t With_required_by.t) result *
+    -> (L.t, Error.t With_required_by.t) result *
        Compile.Resolved_select.t list
+
+  val resolve_pps
+    :  t
+    -> Jbuild.Pp.t list
+    -> (L.t, Error.t With_required_by.t) result
 
   (** Return the list of all libraries in this database. If
       [recursive] is true, also include libraries in parent databases
@@ -210,7 +212,11 @@ module DB : sig
 end with type lib := t
 
 (** The database this library is part of *)
-val db_name : t -> DB.t
+val db : t -> DB.t
+
+(** {1 Transitive closure} *)
+
+val closure : L.t -> (L.t, Error.t With_required_by.t) result
 
 (** {1 Dependencies for META files} *)
 

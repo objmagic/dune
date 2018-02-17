@@ -5,8 +5,10 @@ type t =
   ; db   : Lib.DB.t
   }
 
-let root = t.info.root
-let name = t.info.name
+let root t = t.info.root
+let name t = t.info.name
+let info t = t.info
+let libs t = t.db
 
 module DB = struct
   type scope = t
@@ -40,11 +42,11 @@ module DB = struct
     | Some x -> x
     | None ->
       Sexp.code_error "Scope.DB.find_by_name"
-        [ "name"   , Sexp.To_sexp.string name
+        [ "name"   , Sexp.To_sexp.(option string) name
         ; "context", Sexp.To_sexp.string t.context
         ]
 
-  let create findlib ~scopes ~context ~public_libs private_libs =
+  let create ~scopes ~context ~public_libs private_libs =
     let scopes_info_by_name =
       List.map scopes ~f:(fun (scope : Jbuild.Scope_info.t) ->
         (scope.name, scope))
@@ -53,8 +55,8 @@ module DB = struct
       | Ok x -> x
       | Error (name, scope1, scope2) ->
         let to_sexp (scope : Jbuild.Scope_info.t) =
-          Sexp.To_sexp.(pair string Path.sexp_of_t)
-            scope.name scope.path
+          Sexp.To_sexp.(pair (option string) Path.sexp_of_t)
+            (scope.name, scope.root)
         in
         Sexp.code_error "Scope.DB.create got two scopes with the same name"
           [ "scope1", to_sexp scope1
@@ -64,7 +66,7 @@ module DB = struct
     let libs_by_scope_name =
       List.map private_libs ~f:(fun (dir, (lib : Jbuild.Library.t)) ->
         assert (Option.is_none lib.public);
-        (lib.scope.name, (dir, lib)))
+        (lib.scope_name, (dir, lib)))
       |> Scope_name_map.of_alist_multi
     in
     let by_name =
@@ -76,12 +78,11 @@ module DB = struct
             Lib.DB.create_from_library_stanzas libs
               ~kind:(Private info)
               ~parent:public_libs
-              ~unique_name_suffix:info.name
           in
-          { info; db })
+          Some { info; db })
     in
     let by_dir = Hashtbl.create 1024 in
-    Scope_name_map.iter by_name ~f:(fun name scope ->
-      Hashtbl.add by_dir ~key:scope.info.root scope);
+    Scope_name_map.iter by_name ~f:(fun ~key:name ~data:scope ->
+      Hashtbl.add by_dir ~key:scope.info.root ~data:scope);
     { by_name; by_dir; context }
 end

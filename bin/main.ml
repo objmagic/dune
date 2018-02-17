@@ -488,11 +488,11 @@ let installed_libraries =
        let findlib = ctx.findlib in
        if na then begin
          let pkgs = Findlib.all_unavailable_packages findlib in
-         let longest = List.longest_map pkgs ~f:(fun na -> na.package) in
+         let longest = List.longest_map pkgs ~f:(fun (n, _) -> n) in
          let ppf = Format.std_formatter in
-         List.iter pkgs ~f:(fun (na : Findlib.Package_not_available.t) ->
-           Format.fprintf ppf "%-*s -> %a@\n" longest na.package
-             Findlib.Package_not_available.explain na.reason);
+         List.iter pkgs ~f:(fun (n, r) ->
+           Format.fprintf ppf "%-*s ->%a@\n" longest n
+             (Findlib.Unavailable_reason.explain ~lib_name:"") r);
          Format.pp_print_flush ppf ();
          Fiber.return ()
        end else begin
@@ -500,9 +500,7 @@ let installed_libraries =
          let max_len = List.longest_map pkgs ~f:Findlib.Package.name in
          List.iter pkgs ~f:(fun pkg ->
            let ver =
-             match Findlib.Package.version pkg with
-             | "" -> "n/a"
-             | v  -> v
+             Option.value (Findlib.Package.version pkg) ~default:"n/a"
            in
            Printf.printf "%-*s (version: %s)\n" max_len
              (Findlib.Package.name pkg) ver);
@@ -758,7 +756,7 @@ let external_lib_deps =
                in
                let missing =
                  String_map.filter externals ~f:(fun name _ ->
-                   not (Findlib.available context.findlib name))
+                   not (Findlib.mem context.findlib name))
                in
                if String_map.is_empty missing then
                  acc
