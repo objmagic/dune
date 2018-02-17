@@ -41,7 +41,6 @@ module Info = struct
     ; archives         : Path.t list Mode.Dict.t
     ; plugins          : Path.t list Mode.Dict.t
     ; foreign_archives : Path.t list Mode.Dict.t
-    ; stubs            : Path.t option
     ; jsoo_runtime     : Path.t list
     ; requires         : Deps.t
     ; ppx_runtime_deps : string list
@@ -56,9 +55,9 @@ module Info = struct
     in
     let stubs =
       if Jbuild.Library.has_stubs conf then
-        Some (Jbuild.Library.stubs_archive conf ~dir ~ext_lib:"")
+        [Jbuild.Library.stubs_archive conf ~dir ~ext_lib:""]
       else
-        None
+        []
     in
     let jsoo_runtime =
       List.map conf.buildable.js_of_ocaml.javascript_files
@@ -71,8 +70,8 @@ module Info = struct
     in
     let foreign_archives =
       { Mode.Dict.
-        byte   = []
-      ; native = [Path.relative dir conf.name]
+        byte   = stubs
+      ; native = Path.relative dir conf.name :: stubs
       }
     in
     { loc = conf.buildable.loc
@@ -85,7 +84,6 @@ module Info = struct
     ; plugins  = archive_files ~f_ext:Mode.plugin_ext
     ; optional = conf.optional
     ; foreign_archives
-    ; stubs
     ; jsoo_runtime
     ; status
     ; requires         = Deps.of_lib_deps conf.buildable.libraries
@@ -103,7 +101,6 @@ module Info = struct
     ; synopsis         = P.description pkg
     ; archives         = P.archives pkg
     ; plugins          = P.plugins pkg
-    ; stubs            = None
     ; jsoo_runtime     = P.jsoo_runtime pkg
     ; requires         = Simple (P.requires pkg)
     ; ppx_runtime_deps = P.ppx_runtime_deps pkg
@@ -162,7 +159,6 @@ type t =
   ; archives         : Path.t list Mode.Dict.t
   ; plugins          : Path.t list Mode.Dict.t
   ; foreign_archives : Path.t list Mode.Dict.t
-  ; stubs            : Path.t option
   ; jsoo_runtime     : Path.t list
   ; requires         : t list or_error
   ; ppx_runtime_deps : t list or_error
@@ -276,14 +272,9 @@ module L = struct
 
   let archive_files ts ~mode ~ext_lib =
     List.concat_map ts ~f:(fun t ->
-      let l =
-        Mode.Dict.get t.archives mode @
-        List.map (Mode.Dict.get t.foreign_archives mode)
-          ~f:(Path.extend_basename ~suffix:ext_lib)
-      in
-      match t.stubs with
-      | None -> l
-      | Some fn -> Path.extend_basename fn ~suffix:ext_lib :: l)
+      Mode.Dict.get t.archives mode @
+      List.map (Mode.Dict.get t.foreign_archives mode)
+        ~f:(Path.extend_basename ~suffix:ext_lib))
 
   let remove_dups l =
     let rec loop acc l seen =
@@ -391,7 +382,6 @@ let rec make db name (info : Info.t) ~unique_id ~stack =
   ; archives         = info.archives
   ; plugins          = info.plugins
   ; foreign_archives = info.foreign_archives
-  ; stubs            = info.stubs
   ; jsoo_runtime     = info.jsoo_runtime
   ; requires         = requires
   ; ppx_runtime_deps = ppx_runtime_deps

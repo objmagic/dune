@@ -129,7 +129,6 @@ module Info : sig
     ; archives         : Path.t list Mode.Dict.t
     ; plugins          : Path.t list Mode.Dict.t
     ; foreign_archives : Path.t list Mode.Dict.t (** [.a/.lib/...] files *)
-    ; stubs            : Path.t option
     ; jsoo_runtime     : Path.t list
     ; requires         : Deps.t
     ; ppx_runtime_deps : string list
