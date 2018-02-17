@@ -72,8 +72,7 @@ let file_of_lib t ~loc ~lib ~file =
   match Lib.DB.find t.public_libs lib with
   | Error reason ->
     Error { fail = fun () ->
-      Loc.fail loc "Public library %a"
-        (Lib.Error.Library_not_available.Reason.explain ~lib_name:lib) reason }
+      Lib.not_available ~loc reason "Public library %S" lib  }
   | Ok lib ->
     if Lib.is_local lib then begin
       match String.split (Lib.name lib) ~on:'.' with

@@ -88,6 +88,13 @@ end
 
 exception Error of Error.t With_required_by.t
 
+(** Raise a error about a library that is not available *)
+val not_available
+  :  loc:Loc.t
+  -> Error.Library_not_available.Reason.t
+  -> ('a, Format.formatter, unit, 'b) format4
+  -> 'a
+
 (** {1 Library compilation} *)
 
 (** For compiling the library itself *)

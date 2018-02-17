@@ -37,7 +37,8 @@ module Unavailable_reason : sig
     | Not_found
     | Hidden of Path.t * string
 
-  val explain : Format.formatter -> lib_name:string -> t -> unit
+  val to_string : t -> string
+  val pp : Format.formatter -> t -> unit
 end
 
 (** Lookup a package in the given database *)

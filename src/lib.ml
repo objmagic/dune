@@ -215,6 +215,11 @@ end
 
 exception Error of Error.t With_required_by.t
 
+let not_available ~loc reason fmt =
+  Errors.kerrf fmt ~f:(fun s ->
+    Loc.fail loc "%s %a" s
+      Error.Library_not_available.Reason.pp reason)
+
 (* +-----------------------------------------------------------------+
    | Generals                                                        |
    +-----------------------------------------------------------------+ *)
@@ -751,7 +756,16 @@ module DB = struct
       ~stack:Dep_stack.empty
 
   let rec all ?(recursive=false) t =
-    let l = List.map (Lazy.force t.all) ~f:(find_exn t ~required_by:[]) in
+    let l =
+      List.filter_map (Lazy.force t.all) ~f:(fun name ->
+        match find t name with
+        | Ok x -> Some x
+        | Error (Hidden _) -> None
+        | Error reason ->
+          raise (Error { data        = Library_not_available { name; reason }
+                       ; required_by = []
+                       }))
+    in
     match recursive, t.parent with
     | true, Some t -> all ~recursive t @ l
     | _ -> l
@@ -795,8 +809,9 @@ let report_lib_error ppf (e : Error.t) ~required_by =
   match e with
   | Library_not_available { name; reason } ->
     Format.fprintf ppf
-      "@{<error>Error@}: Library %a.@\n%a@\n"
-      (Error.Library_not_available.Reason.explain ~lib_name:name) reason
+      "@{<error>Error@}: Library %S %a.@\n%a@\n"
+      name
+      Error.Library_not_available.Reason.pp reason
       With_required_by.Entries.pp required_by;
     (match !Clflags.external_lib_deps_hint with
      | [] -> (* during bootstrap *) ()

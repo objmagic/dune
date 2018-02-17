@@ -162,7 +162,13 @@ let setup_library_rules sctx (lib : Library.t) ~dir ~scope ~modules ~mld_files
   let doc_dir = SC.Doc.dir sctx lib in
   let obj_dir, lib_unique_name =
     match Lib.DB.find (Scope.libs scope) lib.name with
-    | Error _ -> assert false
+    | Error Not_found -> assert false
+    | Error (Hidden _) ->
+      (Utils.library_object_directory ~dir lib.name,
+       match lib.public with
+       | None ->
+         sprintf "%s@%s" lib.name (Scope_info.Name.to_string lib.scope_name)
+       | Some p -> p.name)
     | Ok lib ->
       let name = Lib.name lib in
       let name =

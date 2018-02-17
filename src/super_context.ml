@@ -277,28 +277,22 @@ module Libs = struct
              }))
 
   let requires_for_library t ~dir ~scope ~dep_kind (conf : Jbuild.Library.t) =
-    let lib =
-      match Lib.DB.find (Scope.libs scope) conf.name with
-      | Ok x -> x
-      | Error _ ->
-        Sexp.code_error
-          "Super_context.Libs.requires_for_library"
-          [ "lib_name", Atom conf.name
-          ; "scope_name", Sexp.To_sexp.(option string) (Scope.name scope)
-          ; "scope_root", Path.sexp_of_t (Scope.root scope)
-          ; "all_libs",
-            Sexp.To_sexp.(list (pair string Path.sexp_of_t))
-              (Lib.DB.all ~recursive:true (Scope.libs scope)
-               |> List.map ~f:(fun lib ->
-                 (Lib.name lib, Lib.src_dir lib)))
-          ]
-    in
-    add_select_rules t ~dir (Lib.Compile.resolved_selects lib);
-    requires_generic t ~dir
-      ~requires:(Lib.Compile.requires lib)
-      ~buildable:conf.buildable
-      ~virtual_deps:conf.virtual_deps
-      ~dep_kind
+    match Lib.DB.find (Scope.libs scope) conf.name with
+    | Error Not_found -> assert false
+    | Error (Hidden _ as reason) ->
+      let build =
+        Build.fail { fail = fun () ->
+          Lib.not_available ~loc:conf.buildable.loc reason "Library %S"
+            conf.name  }
+      in
+      (build, build)
+    | Ok lib ->
+      add_select_rules t ~dir (Lib.Compile.resolved_selects lib);
+      requires_generic t ~dir
+        ~requires:(Lib.Compile.requires lib)
+        ~buildable:conf.buildable
+        ~virtual_deps:conf.virtual_deps
+        ~dep_kind
 
   let requires_for_executables t ~dir ~scope ~dep_kind
         (exes : Jbuild.Executables.t) =

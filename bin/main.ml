@@ -491,8 +491,8 @@ let installed_libraries =
          let longest = List.longest_map pkgs ~f:(fun (n, _) -> n) in
          let ppf = Format.std_formatter in
          List.iter pkgs ~f:(fun (n, r) ->
-           Format.fprintf ppf "%-*s ->%a@\n" longest n
-             (Findlib.Unavailable_reason.explain ~lib_name:"") r);
+           Format.fprintf ppf "%-*s -> %a@\n" longest n
+             Findlib.Unavailable_reason.pp r);
          Format.pp_print_flush ppf ();
          Fiber.return ()
        end else begin

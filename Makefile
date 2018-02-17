@@ -3,8 +3,6 @@ BIN := ./_build/default/bin/main.exe
 
 -include Makefile.dev
 
-x: test
-
 default: boot.exe
 	./boot.exe --dev
 

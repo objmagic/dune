@@ -40,7 +40,7 @@ val pkg : Jbuilder.Findlib.Package.t = <package:foo>
 Findlib.Package.requires pkg;;
 
 [%%expect{|
-- : Jbuilder.Findlib.Package.t list = [<package:baz>]
+- : string list = ["baz"]
 |}]
 
 (* +-----------------------------------------------------------------+

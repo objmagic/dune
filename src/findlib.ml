@@ -151,12 +151,12 @@ module Unavailable_reason = struct
     | Not_found
     | Hidden of Path.t * string
 
-  let explain ppf ~lib_name t =
-    Format.fprintf ppf "%S %s" lib_name
-      (match t with
-       | Not_found  -> "not found"
-       | Hidden (path, msg) ->
-         sprintf "in %s is hidden (%s)" (Path.to_string_maybe_quoted path) msg)
+  let to_string = function
+    | Not_found  -> "not found"
+    | Hidden (path, msg) ->
+      sprintf "in %s is hidden (%s)" (Path.to_string_maybe_quoted path) msg
+
+  let pp ppf t = Format.pp_print_string ppf (to_string t)
 end
 
 type t =
