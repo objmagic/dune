@@ -762,14 +762,21 @@ module PP = struct
 
   let migrate_driver_main = "ocaml-migrate-parsetree.driver-main"
 
-  let build_ppx_driver sctx ~lib_db ~dep_kind ~target pps ~driver =
+  let build_ppx_driver sctx ~lib_db ~dep_kind ~target pps =
     let ctx = sctx.context in
     let mode = Context.best_mode ctx in
     let compiler = Option.value_exn (Context.compiler ctx mode) in
     let pps = pps @ [Pp.of_string migrate_driver_main] in
-    let libs =
-      Result.bind (Lib.DB.resolve_pps lib_db pps) ~f:Lib.closure
-      |> Libs.requires_to_build ~required_by:[Preprocess (pps :> string list)]
+    let driver, libs =
+      let resolved_pps = Lib.DB.resolve_pps lib_db pps in
+      let driver =
+        match resolved_pps with
+        | Ok    l -> List.last l
+        | Error _ -> None
+      in
+      (driver,
+       Result.bind resolved_pps ~f:Lib.closure
+       |> Libs.requires_to_build ~required_by:[Preprocess (pps :> string list)])
     in
     let libs =
       Build.record_lib_deps ~kind:dep_kind (List.map pps ~f:Lib_dep.of_pp)
@@ -782,10 +789,9 @@ module PP = struct
       | None -> libs
       | Some driver ->
         libs >>^ fun libs ->
-        let is_driver name = name = driver || name = migrate_driver_main in
         let libs, drivers =
           List.partition_map libs ~f:(fun lib ->
-            if List.exists (Lib.names lib) ~f:is_driver then
+            if lib == driver || Lib.name lib = migrate_driver_main then
               Inr lib
             else
               Inl lib)
@@ -846,14 +852,13 @@ module PP = struct
         | "+none+" -> []
         | _ -> String.split key ~on:'+'
       in
-      let driver, names =
+      let names =
         match List.rev names with
-        | [] -> (None, [])
-        | driver :: rest ->
-          (Some driver, List.sort rest ~cmp:String.compare @ [driver])
+        | [] -> []
+        | driver :: rest -> List.sort rest ~cmp:String.compare @ [driver]
       in
       let pps = List.map names ~f:Jbuild.Pp.of_string in
-      build_ppx_driver sctx pps ~lib_db ~dep_kind:Required ~target:exe ~driver
+      build_ppx_driver sctx pps ~lib_db ~dep_kind:Required ~target:exe
     | _ -> ()
 
   let most_specific_db (a : Lib.DB.Kind.t) (b : Lib.DB.Kind.t) =

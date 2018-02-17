@@ -27,14 +27,17 @@ let findlib =
 val findlib : Jbuilder.Findlib.t = <abstr>
 |}]
 
-let pkg = Findlib.find findlib "foo";;
+let pkg =
+  match Findlib.find findlib "foo" with
+  | Ok x -> x
+  | Error _ -> assert false;;
 
 [%%expect{|
 val pkg : Jbuilder.Findlib.Package.t = <package:foo>
 |}]
 
 (* "foo" should depend on "baz" *)
-Findlib.Package.requires pkg ~required_by:[];;
+Findlib.Package.requires pkg;;
 
 [%%expect{|
 - : Jbuilder.Findlib.Package.t list = [<package:baz>]

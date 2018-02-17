@@ -9,9 +9,6 @@ type t
     present or the [name] if not. *)
 val name : t -> string
 
-(** All the names the library might be referred by *)
-val names : t -> string list
-
 (* CR-someday diml: this should be [Path.t list], since some libraries
    have multiple source directories because of [copy_files]. *)
 (** Directory where the source files for the library are located. *)
@@ -114,8 +111,6 @@ module Info : sig
       resolved. *)
   type t =
     { loc              : Loc.t
-    ; name             : string
-    ; other_names      : string list
     ; kind             : Jbuild.Library.Kind.t
     ; src_dir          : Path.t
     ; obj_dir          : Path.t
@@ -133,6 +128,12 @@ module Info : sig
 
   val of_library_stanza : dir:Path.t -> Jbuild.Library.t -> t
   val of_findlib_package : Findlib.Package.t -> t
+end
+
+module Info_or_redirect : sig
+  type t =
+    | Info     of Info.t
+    | Redirect of Loc.t * Path.t * string
 end
 
 (** Collection of libraries organized by names *)
@@ -165,7 +166,9 @@ module DB : sig
   val create
     :  kind:Kind.t
     -> ?parent:t
-    -> resolve:(string -> (Info.t, Error.Library_not_available.Reason.t) result)
+    -> resolve:(string ->
+                (Info_or_redirect.t, Error.Library_not_available.Reason.t)
+                  result)
     -> all:(unit -> string list)
     -> unit
     -> t

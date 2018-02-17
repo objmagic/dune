@@ -25,8 +25,6 @@ module Info = struct
 
   type t =
     { loc              : Loc.t
-    ; name             : string
-    ; other_names      : string list
     ; kind             : Jbuild.Library.Kind.t
     ; src_dir          : Path.t
     ; obj_dir          : Path.t
@@ -43,16 +41,6 @@ module Info = struct
     }
 
   let of_library_stanza ~dir (conf : Jbuild.Library.t) =
-    let name, other_names =
-      match conf.public with
-      | None -> (conf.name, [])
-      | Some p ->
-        (p.name,
-         if p.name = conf.name then
-           []
-         else
-           [conf.name])
-    in
     let archive_file ext = Path.relative dir (conf.name ^ ext) in
     let archive_files ~f_ext =
       Mode.Dict.of_func (fun ~mode -> [archive_file (f_ext mode)])
@@ -68,8 +56,6 @@ module Info = struct
         ~f:(Path.relative dir)
     in
     { loc = conf.buildable.loc
-    ; name
-    ; other_names
     ; kind     = conf.kind
     ; src_dir  = dir
     ; obj_dir  = Utils.library_object_directory ~dir conf.name
@@ -88,8 +74,6 @@ module Info = struct
   let of_findlib_package pkg =
     let module P = Findlib.Package in
     { loc              = Loc.in_file (Path.to_string (P.meta_file pkg))
-    ; name             = P.name pkg
-    ; other_names      = []
     ; kind             = Normal
     ; src_dir          = P.dir pkg
     ; obj_dir          = P.dir pkg
@@ -104,6 +88,12 @@ module Info = struct
     ; pps              = []
     ; optional         = false
     }
+end
+
+module Info_or_redirect = struct
+  type t =
+    | Info     of Info.t
+    | Redirect of Loc.t * Path.t * string
 end
 
 (* +-----------------------------------------------------------------+
@@ -150,7 +140,6 @@ end
 type t =
   { loc              : Loc.t
   ; name             : string
-  ; other_names      : string list
   ; unique_id        : int
   ; kind             : Jbuild.Library.Kind.t
   ; src_dir          : Path.t
@@ -169,7 +158,8 @@ type t =
 
 and db =
   { parent  : db option
-  ; resolve : string -> (Info.t, Error0.Library_not_available.Reason.t) result
+  ; resolve : string -> (Info_or_redirect.t,
+                         Error0.Library_not_available.Reason.t) result
   ; table   : (string, resolve_status) Hashtbl.t
   ; all     : string list Lazy.t
   ; db_kind : DB_kind.t
@@ -215,8 +205,7 @@ exception Error of Error.t With_required_by.t
    | Generals                                                        |
    +-----------------------------------------------------------------+ *)
 
-let name  t = t.name
-let names t = t.name :: t.other_names
+let name t = t.name
 
 let kind         t = t.kind
 let synopsis     t = t.synopsis
@@ -363,7 +352,7 @@ let map_find_result name res : (_, _) result =
           ; required_by = []
           }
 
-let rec make db (info : Info.t) ~unique_id ~stack =
+let rec make db name (info : Info.t) ~unique_id ~stack =
   let requires, resolved_selects =
     resolve_user_deps db info.requires ~pps:info.pps ~stack
   in
@@ -372,13 +361,12 @@ let rec make db (info : Info.t) ~unique_id ~stack =
   in
   let map_error x =
     Result.map_error x ~f:(fun e ->
-      With_required_by.prepend_one e (Library (info.src_dir, info.name)))
+      With_required_by.prepend_one e (Library (info.src_dir, name)))
   in
   let requires         = map_error requires         in
   let ppx_runtime_deps = map_error ppx_runtime_deps in
   { loc              = info.loc
-  ; name             = info.name
-  ; other_names      = info.other_names
+  ; name             = name
   ; unique_id        = unique_id
   ; kind             = info.kind
   ; src_dir          = info.src_dir
@@ -410,40 +398,45 @@ and find_internal db name ~stack : (_, _) result =
 
 and resolve_name db name ~stack =
   match db.resolve name with
-  | Ok info ->
-    let names = info.name :: info.other_names in
-    if not (List.mem name ~set:names) then
-      Sexp.code_error
-        "Lib_db.DB: resolver result didn't include requested name"
-        [ "requested_name", Sexp.To_sexp.string name
-        ; "returned_names", Sexp.To_sexp.(list string) names
-        ];
+  | Ok (Redirect (_loc, path, name')) ->
+    let init, stack =
+      Dep_stack.create_and_push stack name path
+    in
+    Hashtbl.add db.table ~key:name ~data:(Initializing init);
+    let res =
+      match find_internal db name' ~stack with
+      | Ok _ as res -> res
+      | Error _ ->
+        match Hashtbl.find db.table name' with
+        | Some (Done res) -> res
+        | _ -> assert false
+    in
+    Hashtbl.replace db.table ~key:name ~data:(Done res);
+    res
+  | Ok (Info info) ->
     let init, stack =
       Dep_stack.create_and_push stack name info.src_dir
     in
     (* Add [init] to the table, to detect loops *)
-    List.iter names ~f:(fun name ->
-      Option.iter (Hashtbl.find db.table name) ~f:(fun x ->
-        let to_sexp = Sexp.To_sexp.(pair Path.sexp_of_t (list string)) in
-        let sexp =
-          match x with
-          | Initializing x ->
-            Sexp.List [Atom "Initializing"; Path.sexp_of_t x.path]
-          | Done (Ok t) ->
-            to_sexp (t.src_dir, t.name :: t.other_names)
-          | Done (Error Not_found) ->
-            Atom "Not_found"
-          | Done (Error (Hidden (p, s))) ->
-            List [Atom "Hidden"; Path.sexp_of_t p; Atom s]
-        in
+    Option.iter (Hashtbl.find db.table name) ~f:(fun x ->
+      let to_sexp = Sexp.To_sexp.(pair Path.sexp_of_t string) in
+      let sexp =
+        match x with
+        | Initializing x ->
+          Sexp.List [Atom "Initializing"; Path.sexp_of_t x.path]
+        | Done (Ok t) -> List [Atom "Ok"; Path.sexp_of_t t.src_dir]
+        | Done (Error Not_found) -> Atom "Not_found"
+        | Done (Error (Hidden (p, s))) ->
+          List [Atom "Hidden"; Path.sexp_of_t p; Atom s]
+      in
         Sexp.code_error
           "Lib_db.DB: resolver returned name that's already in the table"
           [ "name"            , Atom name
-          ; "returned_lib"    , to_sexp (info.src_dir, names)
+          ; "returned_lib"    , to_sexp (info.src_dir, name)
           ; "conflicting_with", sexp
           ]);
-      Hashtbl.add db.table ~key:name ~data:(Initializing init));
-    let t = make db info ~unique_id:init.unique_id ~stack in
+    Hashtbl.add db.table ~key:name ~data:(Initializing init);
+    let t = make db name info ~unique_id:init.unique_id ~stack in
     let res =
       if not info.optional ||
          (Result.is_ok t.requires && Result.is_ok t.ppx_runtime_deps) then
@@ -453,8 +446,7 @@ and resolve_name db name ~stack =
           (Error.Library_not_available.Reason.Hidden
              (info.src_dir, "optional with unavailable dependencies"))
     in
-    List.iter names ~f:(fun name ->
-      Hashtbl.replace db.table ~key:name ~data:(Done res));
+    Hashtbl.replace db.table ~key:name ~data:(Done res);
     res
   | Error reason as res ->
     let res =
@@ -677,19 +669,34 @@ module DB = struct
 
   let create_from_library_stanzas ~kind ?parent stanzas =
     let map =
-      List.concat_map stanzas ~f:(fun (dir, conf) ->
-        let info = Info.of_library_stanza ~dir conf in
-        List.map (info.name :: info.other_names) ~f:(fun n -> (n, info)))
+      List.map stanzas ~f:(fun (dir, (conf : Jbuild.Library.t)) ->
+        match (kind : Kind.t) with
+        | Installed -> assert false
+        | Public ->
+          let name = (Option.value_exn conf.public).name in
+          let info = Info.of_library_stanza ~dir conf in
+          (name, Info_or_redirect.Info info)
+        | Private _ ->
+          (conf.name,
+           match conf.public with
+           | Some p -> Redirect (conf.buildable.loc, dir, p.name)
+           | None ->
+             let info = Info.of_library_stanza ~dir conf in
+             Info info))
       |> String_map.of_alist
       |> function
       | Ok x -> x
-      | Error (name, info1, info2) ->
+      | Error (name, x, y) ->
+        let pr : Info_or_redirect.t -> string = function
+          | Info      info       -> Loc.to_file_colon_line info.loc
+          | Redirect (loc, _, _) -> Loc.to_file_colon_line loc
+        in
         die "Library %S is defined twice:\n\
              - %s\n\
              - %s"
           name
-          (Loc.to_file_colon_line info1.loc)
-          (Loc.to_file_colon_line info2.loc)
+          (pr x)
+          (pr y)
     in
     create () ?parent ~kind
       ~resolve:(fun name ->
@@ -703,7 +710,7 @@ module DB = struct
       ~kind:Installed
       ~resolve:(fun name ->
         match Findlib.find findlib name with
-        | Ok pkg -> Ok (Info.of_findlib_package pkg)
+        | Ok pkg -> Ok (Info_or_redirect.Info (Info.of_findlib_package pkg))
         | Error _ as res -> res)
       ~all:(fun () ->
         Findlib.all_packages findlib
