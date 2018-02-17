@@ -5,6 +5,13 @@ open Result.O
    | Raw library information                                         |
    +-----------------------------------------------------------------+ *)
 
+module Status = struct
+  type t =
+    | Installed
+    | Public
+    | Private of Jbuild.Scope_info.Name.t
+end
+
 module Info = struct
   module Deps = struct
     type t =
@@ -26,6 +33,7 @@ module Info = struct
   type t =
     { loc              : Loc.t
     ; kind             : Jbuild.Library.Kind.t
+    ; status           : Status.t
     ; src_dir          : Path.t
     ; obj_dir          : Path.t
     ; version          : string option
@@ -55,6 +63,11 @@ module Info = struct
       List.map conf.buildable.js_of_ocaml.javascript_files
         ~f:(Path.relative dir)
     in
+    let status =
+      match conf.public with
+      | None   -> Status.Private conf.scope_name
+      | Some _ -> Public
+    in
     { loc = conf.buildable.loc
     ; kind     = conf.kind
     ; src_dir  = dir
@@ -66,6 +79,7 @@ module Info = struct
     ; optional = conf.optional
     ; stubs
     ; jsoo_runtime
+    ; status
     ; requires         = Deps.of_lib_deps conf.buildable.libraries
     ; ppx_runtime_deps = conf.ppx_runtime_libraries
     ; pps = Jbuild.Preprocess_map.pps conf.buildable.preprocess
@@ -87,13 +101,8 @@ module Info = struct
     ; ppx_runtime_deps = P.ppx_runtime_deps pkg
     ; pps              = []
     ; optional         = false
+    ; status           = Installed
     }
-end
-
-module Info_or_redirect = struct
-  type t =
-    | Info     of Info.t
-    | Redirect of Loc.t * Path.t * string
 end
 
 (* +-----------------------------------------------------------------+
@@ -130,18 +139,12 @@ module Init = struct
     }
 end
 
-module DB_kind = struct
-  type t =
-    | Installed
-    | Public
-    | Private of Jbuild.Scope_info.t
-end
-
 type t =
   { loc              : Loc.t
   ; name             : string
   ; unique_id        : int
   ; kind             : Jbuild.Library.Kind.t
+  ; status           : Status.t
   ; src_dir          : Path.t
   ; obj_dir          : Path.t
   ; version          : string option
@@ -158,11 +161,10 @@ type t =
 
 and db =
   { parent  : db option
-  ; resolve : string -> (Info_or_redirect.t,
+  ; resolve : string -> (info_or_redirect,
                          Error0.Library_not_available.Reason.t) result
   ; table   : (string, resolve_status) Hashtbl.t
   ; all     : string list Lazy.t
-  ; db_kind : DB_kind.t
   }
 
 and resolve_status =
@@ -174,6 +176,11 @@ and error =
   | No_solution_found_for_select of Error0.No_solution_found_for_select.t
   | Dependency_cycle             of (Path.t * string) list
   | Conflict                     of conflict
+
+and info_or_redirect =
+  | Info     of Info.t
+  | Redirect of Loc.t * Path.t * string
+  | Proxy    of t
 
 and conflict =
   { lib1 : t * With_required_by.Entry.t list
@@ -218,7 +225,7 @@ let obj_dir t = t.obj_dir
 
 let is_local t = Path.is_local t.obj_dir
 
-let db t = t.db
+let status t = t.status
 
 let to_init t : Init.t =
   { unique_id = t.unique_id
@@ -369,6 +376,7 @@ let rec make db name (info : Info.t) ~unique_id ~stack =
   ; name             = name
   ; unique_id        = unique_id
   ; kind             = info.kind
+  ; status           = info.status
   ; src_dir          = info.src_dir
   ; obj_dir          = info.obj_dir
   ; version          = info.version
@@ -398,6 +406,10 @@ and find_internal db name ~stack : (_, _) result =
 
 and resolve_name db name ~stack =
   match db.resolve name with
+  | Ok (Proxy t) ->
+    let res = Ok t in
+    Hashtbl.replace db.table ~key:name ~data:(Done res);
+    res
   | Ok (Redirect (_loc, path, name')) ->
     let init, stack =
       Dep_stack.create_and_push stack name path
@@ -653,39 +665,36 @@ end
    +-----------------------------------------------------------------+ *)
 
 module DB = struct
+  module Info_or_redirect = struct
+    type nonrec t = info_or_redirect =
+      | Info     of Info.t
+      | Redirect of Loc.t * Path.t * string
+      | Proxy    of t
+  end
+
   type t = db
 
-  module Kind = DB_kind
-
-  let kind t = t.db_kind
-
-  let create ~kind ?parent ~resolve ~all () =
-    { db_kind = kind
-    ; parent
+  let create ?parent ~resolve ~all () =
+    { parent
     ; resolve
     ; table  = Hashtbl.create 1024
     ; all    = Lazy.from_fun all
     }
 
-  let create_from_library_stanzas ~kind ?parent stanzas =
+  let create_from_library_stanzas ?parent stanzas =
     let map =
-      List.filter_map stanzas ~f:(fun (dir, (conf : Jbuild.Library.t)) ->
-        match (kind : Kind.t) with
-        | Installed -> assert false
-        | Public ->
-          let name = (Option.value_exn conf.public).name in
-          let info = Info.of_library_stanza ~dir conf in
-          Some (name, Info_or_redirect.Info info)
-        | Private _ ->
-          match conf.public with
-          | None ->
-            let info = Info.of_library_stanza ~dir conf in
-            Some (conf.name, Info info)
-          | Some p ->
-            if conf.name = p.name then
-              None
-            else
-              Some (conf.name, Redirect (conf.buildable.loc, dir, p.name)))
+      List.concat_map stanzas ~f:(fun (dir, (conf : Jbuild.Library.t)) ->
+        let info = Info.of_library_stanza ~dir conf in
+        match conf.public with
+        | None ->
+          [(conf.name, Info_or_redirect.Info info)]
+        | Some p ->
+          if p.name = conf.name then
+            [(p.name, Info info)]
+          else
+            [ p.name   , Info info
+            ; conf.name, Redirect (conf.buildable.loc, dir, p.name)
+            ])
       |> String_map.of_alist
       |> function
       | Ok x -> x
@@ -693,6 +702,7 @@ module DB = struct
         let pr : Info_or_redirect.t -> string = function
           | Info      info       -> Loc.to_file_colon_line info.loc
           | Redirect (loc, _, _) -> Loc.to_file_colon_line loc
+          | Proxy     t          -> Loc.to_file_colon_line t.loc
         in
         die "Library %S is defined twice:\n\
              - %s\n\
@@ -701,7 +711,7 @@ module DB = struct
           (pr x)
           (pr y)
     in
-    create () ?parent ~kind
+    create () ?parent
       ~resolve:(fun name ->
         match String_map.find name map with
         | None -> Error Not_found
@@ -710,7 +720,6 @@ module DB = struct
 
   let create_from_findlib findlib =
     create ()
-      ~kind:Installed
       ~resolve:(fun name ->
         match Findlib.find findlib name with
         | Ok pkg -> Ok (Info_or_redirect.Info (Info.of_findlib_package pkg))

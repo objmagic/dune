@@ -46,7 +46,7 @@ module DB = struct
         ; "context", Sexp.To_sexp.string t.context
         ]
 
-  let create ~scopes ~context ~public_libs private_libs =
+  let create ~scopes ~context ~installed_libs private_libs =
     let scopes_info_by_name =
       List.map scopes ~f:(fun (scope : Jbuild.Scope_info.t) ->
         (scope.name, scope))
@@ -74,9 +74,7 @@ module DB = struct
           let info = Option.value_exn info         in
           let libs = Option.value libs ~default:[] in
           let db =
-            Lib.DB.create_from_library_stanzas libs
-              ~kind:(Private info)
-              ~parent:public_libs
+            Lib.DB.create_from_library_stanzas libs ~parent:installed_libs
           in
           Some { info; db })
     in

@@ -26,6 +26,15 @@ val archives     : t -> Path.t list Mode.Dict.t
 val plugins      : t -> Path.t list Mode.Dict.t
 val jsoo_runtime : t -> Path.t list
 
+module Status : sig
+  type t =
+    | Installed
+    | Public
+    | Private of Jbuild.Scope_info.Name.t
+end
+
+val status : t -> Status.t
+
 (** Operations on list of libraries *)
 module L : sig
   type nonrec t = t list
@@ -112,6 +121,7 @@ module Info : sig
   type t =
     { loc              : Loc.t
     ; kind             : Jbuild.Library.Kind.t
+    ; status           : Status.t
     ; src_dir          : Path.t
     ; obj_dir          : Path.t
     ; version          : string option
@@ -130,12 +140,6 @@ module Info : sig
   val of_findlib_package : Findlib.Package.t -> t
 end
 
-module Info_or_redirect : sig
-  type t =
-    | Info     of Info.t
-    | Redirect of Loc.t * Path.t * string
-end
-
 (** Collection of libraries organized by names *)
 module DB : sig
   type lib = t
@@ -143,17 +147,12 @@ module DB : sig
   (** A database allow to resolve library names *)
   type t
 
-  module Kind : sig
-    type t =
-      | Installed
-      (** Installed libraries               *)
-      | Public
-      (** Public libraries of the workspace *)
-      | Private of Jbuild.Scope_info.t
-      (** Private libraries of the given scope *)
+  module Info_or_redirect : sig
+    type nonrec t =
+      | Info     of Info.t
+      | Redirect of Loc.t * Path.t * string
+      | Proxy    of lib
   end
-
-  val kind : t -> Kind.t
 
   (** Create a new library database. [resolve] is used to resolve
       library names in this database.
@@ -164,8 +163,7 @@ module DB : sig
       [all] returns the list of names of libraries available in this database.
   *)
   val create
-    :  kind:Kind.t
-    -> ?parent:t
+    :  ?parent:t
     -> resolve:(string ->
                 (Info_or_redirect.t, Error.Library_not_available.Reason.t)
                   result)
@@ -175,8 +173,7 @@ module DB : sig
 
   (** Create a database from a list of library stanzas *)
   val create_from_library_stanzas
-    :  kind:Kind.t
-    -> ?parent:t
+    :  ?parent:t
     -> (Path.t * Jbuild.Library.t) list
     -> t
 
@@ -213,9 +210,6 @@ module DB : sig
       recursively. *)
   val all : ?recursive:bool -> t -> lib list
 end with type lib := t
-
-(** The database this library is part of *)
-val db : t -> DB.t
 
 (** {1 Transitive closure} *)
 

@@ -166,11 +166,11 @@ let setup_library_rules sctx (lib : Library.t) ~dir ~scope ~modules ~mld_files
     | Ok lib ->
       let name = Lib.name lib in
       let name =
-        match Lib.DB.kind (Lib.db lib) with
+        match Lib.status lib with
         | Installed -> assert false
         | Public    -> name
-        | Private scope ->
-          sprintf "%s@%s" name (Scope_info.Name.to_string scope.name)
+        | Private scope_name ->
+          sprintf "%s@%s" name (Scope_info.Name.to_string scope_name)
       in
       (Lib.obj_dir lib, name)
   in

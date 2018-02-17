@@ -85,15 +85,6 @@ let create
         | Library lib -> Some (ctx_dir, lib)
         | _ -> None))
   in
-  let public_libs =
-    let public_libs =
-      List.filter internal_libs ~f:(fun (_dir, lib) ->
-        Option.is_some lib.Library.public)
-    in
-    Lib.DB.create_from_library_stanzas public_libs
-      ~kind:Public
-      ~parent:installed_libs
-  in
   let scopes =
     let scopes =
       List.map scopes ~f:(fun (scope : Scope_info.t) ->
@@ -102,8 +93,28 @@ let create
     Scope.DB.create
       ~scopes
       ~context:context.name
-      ~public_libs
+      ~installed_libs
       internal_libs
+  in
+  let public_libs =
+    let public_libs =
+      List.filter_map internal_libs ~f:(fun (_dir, lib) ->
+        match lib.Library.public with
+        | None -> None
+        | Some p -> Some (p.name, lib.scope_name))
+      |> String_map.of_alist_exn
+    in
+    Lib.DB.create ()
+      ~parent:installed_libs
+      ~resolve:(fun name ->
+        match String_map.find name public_libs with
+        | None -> Error Not_found
+        | Some scope_name ->
+          let scope = Scope.DB.find_by_name scopes scope_name in
+          match Lib.DB.find (Scope.libs scope) name with
+          | Error _ as res -> res
+          | Ok t -> Ok (Proxy t))
+      ~all:(fun () -> String_map.keys public_libs)
   in
   let stanzas =
     List.map stanzas
@@ -379,10 +390,10 @@ module Doc = struct
         if Lib.is_local lib then (
           let dir =
             dir_internal t
-              (match Lib.DB.kind (Lib.db lib) with
+              (match Lib.status lib with
                | Installed -> assert false
                | Public    -> Public (Lib.name lib)
-               | Private s -> Private (Lib.name lib, s.name))
+               | Private s -> Private (Lib.name lib, s))
           in
           Alias.stamp_file (alias ~dir) :: acc
         ) else (
@@ -872,7 +883,7 @@ module PP = struct
       build_ppx_driver sctx pps ~lib_db ~dep_kind:Required ~target:exe
     | _ -> ()
 
-  let most_specific_db (a : Lib.DB.Kind.t) (b : Lib.DB.Kind.t) =
+  let most_specific_db (a : Lib.Status.t) (b : Lib.Status.t) =
     match a, b with
     | Private x, Private y -> assert (x = y); a
     | Private _, _         -> a
@@ -892,13 +903,13 @@ module PP = struct
       match Lib.DB.find (Scope.libs scope) name with
       | Error _ ->
         (* XXX unknown but assume it's public *)
-        (name, Lib.DB.Kind.Installed)
+        (name, Lib.Status.Installed)
       | Ok lib ->
-        (Lib.name lib, Lib.DB.kind (Lib.db lib))
+        (Lib.name lib, Lib.status lib)
     in
     let driver, driver_db =
       match driver with
-      | None -> (None, Lib.DB.Kind.Installed)
+      | None -> (None, Lib.Status.Installed)
       | Some driver ->
         let name, db = name_and_db driver in
         (Some name, db)
@@ -922,8 +933,8 @@ module PP = struct
     let key =
       match db with
       | Installed | Public -> key
-      | Private scope ->
-        sprintf "%s@%s" key (Scope_info.Name.to_string scope.name)
+      | Private scope_name ->
+        sprintf "%s@%s" key (Scope_info.Name.to_string scope_name)
     in
     let sctx = host_sctx sctx in
     let ppx_dir = Path.relative sctx.ppx_dir key in
