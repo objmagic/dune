@@ -12,8 +12,10 @@ module Entry = struct
   let to_string = function
     | Path p -> Utils.describe_target p
     | Alias p -> "alias " ^ Utils.describe_target p
-    | Library (_, s) -> sprintf "library %S" s
-    | Preprocess l -> Sexp.to_string (List [Atom "pps"; Sexp.To_sexp.(list string) l])
+    | Library (path, lib_name) ->
+      sprintf "library %S in %s" lib_name (Path.to_string_maybe_quoted path)
+    | Preprocess l ->
+      Sexp.to_string (List [Atom "pps"; Sexp.To_sexp.(list string) l])
 
   let pp ppf x =
     Format.pp_print_string ppf (to_string x)

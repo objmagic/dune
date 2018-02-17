@@ -419,7 +419,8 @@ and find_internal db name ~stack =
            (Result.is_ok t.requires && Result.is_ok t.ppx_runtime_deps) then
           Ok t
         else
-          Error (Hidden "ignored (optional with unavailable dependencies)")
+          Error
+            (Hidden (info.src_dir, "optional with unavailable dependencies"))
       in
       List.iter names ~f:(fun name ->
         Hashtbl.replace t.resolve_cache ~key:name ~data:res);
@@ -570,15 +571,11 @@ module Closure =
 exception Conflict of Error.Conflict.t
 
 let check_conflicts ts ~required_by =
-  let add acc name t =
-    match String_map.find name acc with
-    | None -> String_map.add name ~key:acc ~data:t
-    | Some t' -> raise_notrace (Conflict { lib1 = t'; lib2 = t })
-  in
   match
     List.fold_left ts ~init:String_map.empty ~f:(fun acc t ->
-      List.fold_left (names (fst t)) ~init:acc
-        ~f:(fun acc name -> add acc name t))
+      match String_map.find t.name acc with
+      | None -> String_map.add acc ~key:t.name ~data:t
+      | Some t' -> raise_notrace (Conflict { lib1 = t'; lib2 = t }))
   with
   | (_ : _ String_map.t) ->
     Ok (List.map ts ~f:fst)

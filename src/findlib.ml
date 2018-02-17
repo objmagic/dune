@@ -147,7 +147,7 @@ end
 module Unavailable_reason = struct
   type t =
     | Not_found
-    | Hidden of string
+    | Hidden of Path.t * string
 end
 
 type t =
@@ -193,7 +193,7 @@ let parse_package t ~meta_file ~name ~parent_dir ~vars =
          ; vars
          }
     else
-      Error (Unavailable_reason.Hidden "hidden (unsatisfied 'exist_if')")
+      Error (Unavailable_reason.Hidden (dir, "unsatisfied 'exist_if'"))
   in
   (dir, res)
 

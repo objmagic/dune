@@ -9,6 +9,62 @@ let pp_required_by ppf required_by =
           Format.fprintf ppf "-> required by %a" With_required_by.Entry.pp x))
     required_by
 
+    | Library_not_available        of Library_not_available.t
+    | No_solution_found_for_select of No_solution_found_for_select.t
+    | Dependency_cycle             of (Path.t * string) list
+    | Conflict                     of Conflict.t
+
+let report_lib_error ppf (e : Lib.Error.t) ~required_by =
+  match e with
+  | Library_not_available { name; reason } ->
+    Format.fprintf ppf
+      "@{<error>Error@}: Library %S %s.@\n" package
+      (match reason with
+       | Not_found  -> "not found"
+       | Hidden (path, msg) ->\
+         sprintf "in %s is hidden (%s)" (Path.to_string_maybe_quoted path) msg);
+    pp_required_by ppf required_by;
+    (match !Clflags.external_lib_deps_hint with
+     | [] -> (* during bootstrap *) ()
+     | l ->
+       Format.fprintf ppf
+         "Hint: try: %s\n"
+         (List.map l ~f:quote_for_shell |> String.concat ~sep:" "));
+    false
+  | Conflict { lib1 = (lib1, rb1); lib2 = (lib2, rb2) } ->
+    Format.fprintf ppf
+      "@{<error>Error@}: Conflict between the following libaries:\n\
+       - %S in %s\n\
+      \    %a\
+       - %S in %s\n\
+      \    %a\
+       %a\
+       This cannot work.\n"
+      (Lib.name lib1) (Lib.src_dir lib1)
+      pp_required_by r1
+      (Lib.name lib2) (Lib.src_dir lib2)
+      pp_required_by r2
+      pp_required_by required_by;
+    false
+  | No_solution_found_for_select { loc } ->
+    Format.fprintf ppf
+      "%a@{<error>Error@}: No solution found for this select form.\n"
+      Loc.print loc;
+    false
+  | Dependency_cycle cycle ->
+    Format.fprintf ppf
+      "@{<error>Error@}: Dependency cycle detected between the \
+       following libraries:\n\
+       @[<v>%a@]\n\
+       Required by:\n\
+       %a"
+      (Format.pp_print_list (fun ppf (name, path) ->
+         Format.fprintf ppf "-> %S in %s"
+           name (Path.to_string_maybe_quoted path)))
+      cycle
+      pp_required_by required_by;
+    false
+
 (* Return [true] if the backtrace was printed *)
 let report_with_backtrace ppf exn ~backtrace =
   match exn with
@@ -33,52 +89,8 @@ let report_with_backtrace ppf exn ~backtrace =
     else
       Format.fprintf ppf "%s\n" (String.capitalize_ascii msg);
     false
-  | Findlib.Findlib (Package_not_available { package; required_by; reason }) ->
-    Format.fprintf ppf
-      "@{<error>Error@}: External library %S %s.@\n" package
-      (match reason with
-       | Not_found -> "not found"
-       | Hidden    -> "is hidden");
-    pp_required_by ppf required_by;
-    begin match reason with
-    | Not_found -> ()
-    | Hidden ->
-      Format.fprintf ppf
-        "External library %S is hidden because its 'exist_if' \
-         clause is not satisfied.\n" package
-    end;
-    (match !Clflags.external_lib_deps_hint with
-     | [] -> (* during bootstrap *) ()
-     | l ->
-       Format.fprintf ppf
-         "Hint: try: %s\n"
-         (List.map l ~f:quote_for_shell |> String.concat ~sep:" "));
-    false
-  | Findlib.Findlib
-      (External_dep_conflicts_with_local_lib
-         { package; required_by; required_locally_in; defined_locally_in }) ->
-    Format.fprintf ppf
-      "@{<error>Error@}: Conflict between internal and external version of library %S:\n\
-       - it is defined locally in %s\n\
-       - it is required by external library %a\n\
-      \  %a\
-       This cannot work.\n"
-      package
-      (Utils.describe_target
-         (Utils.jbuild_file_in ~dir:(Path.drop_optional_build_context defined_locally_in)))
-      With_required_by.Entry.pp required_by
-      pp_required_by required_locally_in;
-    false
-  | Findlib.Findlib (Dependency_cycle { cycle; required_by }) ->
-    Format.fprintf ppf
-      "@{<error>Error@}: \
-       Dependency cycle detected between external findlib packages:\n\
-       @[<v>%a@]\n\
-       Required by:\n\
-       %a"
-      (Format.pp_print_list (fun ppf -> Format.fprintf ppf "-> %s")) cycle
-      pp_required_by required_by;
-    false
+  | Lib.Error { data; required_by } ->
+    report_lib_error ppf data ~required_by
   | Code_error msg ->
     let bt = Printexc.raw_backtrace_to_string backtrace in
     Format.fprintf ppf "@{<error>Internal error, please report upstream \

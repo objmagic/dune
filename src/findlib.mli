@@ -35,7 +35,7 @@ end
 module Unavailable_reason : sig
   type t =
     | Not_found
-    | Hidden of string
+    | Hidden of Path.t * string
 end
 
 (** Lookup a package in the given database *)
