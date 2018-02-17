@@ -239,8 +239,3 @@ module Meta : sig
     -> required_by:With_required_by.Entry.t list
     -> String_set.t
 end
-
-(* val public_name : t -> string option
- * type local = { src: Path.t ; name: string }
- * val local : t -> local option
- * val unique_id : t -> string *)

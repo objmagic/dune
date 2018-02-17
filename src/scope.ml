@@ -65,7 +65,6 @@ module DB = struct
     in
     let libs_by_scope_name =
       List.map private_libs ~f:(fun (dir, (lib : Jbuild.Library.t)) ->
-        assert (Option.is_none lib.public);
         (lib.scope_name, (dir, lib)))
       |> Scope_name_map.of_alist_multi
     in

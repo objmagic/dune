@@ -77,19 +77,19 @@ let create
       ~build_system
   =
   let installed_libs = Lib.DB.create_from_findlib context.findlib in
-  let public_libs, private_libs =
+  let internal_libs =
     List.concat_map stanzas ~f:(fun (dir, _, stanzas) ->
       let ctx_dir = Path.append context.build_dir dir in
       List.filter_map stanzas ~f:(fun stanza ->
         match (stanza : Stanza.t) with
         | Library lib -> Some (ctx_dir, lib)
         | _ -> None))
-    |> List.partition_map ~f:(fun (dir, lib) ->
-      match lib.Library.public with
-      | Some _ -> Inl (dir, lib)
-      | None   -> Inr (dir, lib))
   in
   let public_libs =
+    let public_libs =
+      List.filter internal_libs ~f:(fun (_dir, lib) ->
+        Option.is_some lib.Library.public)
+    in
     Lib.DB.create_from_library_stanzas public_libs
       ~kind:Public
       ~parent:installed_libs
@@ -103,7 +103,7 @@ let create
       ~scopes
       ~context:context.name
       ~public_libs
-      private_libs
+      internal_libs
   in
   let stanzas =
     List.map stanzas
@@ -288,8 +288,19 @@ module Libs = struct
   let requires_for_library t ~dir ~scope ~dep_kind (conf : Jbuild.Library.t) =
     let lib =
       match Lib.DB.find (Scope.libs scope) conf.name with
-      | Ok    x -> x
-      | Error _ -> assert false
+      | Ok x -> x
+      | Error _ ->
+        Sexp.code_error
+          "Super_context.Libs.requires_for_library"
+          [ "lib_name", Atom conf.name
+          ; "scope_name", Sexp.To_sexp.(option string) (Scope.name scope)
+          ; "scope_root", Path.sexp_of_t (Scope.root scope)
+          ; "all_libs",
+            Sexp.To_sexp.(list (pair string Path.sexp_of_t))
+              (Lib.DB.all ~recursive:true (Scope.libs scope)
+               |> List.map ~f:(fun lib ->
+                 (Lib.name lib, Lib.src_dir lib)))
+          ]
     in
     add_select_rules t ~dir (Lib.Compile.resolved_selects lib);
     requires_generic t ~dir

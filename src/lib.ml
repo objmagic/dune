@@ -669,20 +669,23 @@ module DB = struct
 
   let create_from_library_stanzas ~kind ?parent stanzas =
     let map =
-      List.map stanzas ~f:(fun (dir, (conf : Jbuild.Library.t)) ->
+      List.filter_map stanzas ~f:(fun (dir, (conf : Jbuild.Library.t)) ->
         match (kind : Kind.t) with
         | Installed -> assert false
         | Public ->
           let name = (Option.value_exn conf.public).name in
           let info = Info.of_library_stanza ~dir conf in
-          (name, Info_or_redirect.Info info)
+          Some (name, Info_or_redirect.Info info)
         | Private _ ->
-          (conf.name,
-           match conf.public with
-           | Some p -> Redirect (conf.buildable.loc, dir, p.name)
-           | None ->
-             let info = Info.of_library_stanza ~dir conf in
-             Info info))
+          match conf.public with
+          | None ->
+            let info = Info.of_library_stanza ~dir conf in
+            Some (conf.name, Info info)
+          | Some p ->
+            if conf.name = p.name then
+              None
+            else
+              Some (conf.name, Redirect (conf.buildable.loc, dir, p.name)))
       |> String_map.of_alist
       |> function
       | Ok x -> x
@@ -702,7 +705,7 @@ module DB = struct
       ~resolve:(fun name ->
         match String_map.find name map with
         | None -> Error Not_found
-        | Some info -> Ok info)
+        | Some x -> Ok x)
       ~all:(fun () -> String_map.keys map)
 
   let create_from_findlib findlib =
@@ -775,64 +778,6 @@ module Meta = struct
   let ppx_runtime_deps t ~required_by =
     to_names (ppx_runtime_deps_exn t ~required_by)
 end
-
-(* let describe = function
- *   | Internal (_, lib) ->
- *     sprintf "%s (local)"
- *       (match lib.public with
- *        | Some p -> p.name
- *        | None -> lib.name)
- *   | External pkg ->
- *     sprintf "%s (external)" (FP.name pkg)
- *
- * let ppx_runtime_libraries t ~required_by =
- *   String_set.of_list (
- *     match t with
- *     | Internal (_, lib) -> lib.ppx_runtime_libraries
- *     | External pkg -> List.map ~f:FP.name (FP.ppx_runtime_deps pkg ~required_by)
- *   )
- *
- * let requires t ~required_by =
- *   match t with
- *   | Internal (_, lib) ->
- *     lib.buildable.libraries
- *   | External pkg ->
- *     List.map ~f:(fun fp -> Jbuild.Lib_dep.direct (FP.name fp))
- *       (FP.requires pkg ~required_by)
- *
- * let scope = function
- *   | Internal (dir, _) -> `Dir dir
- *   | External _ -> `External
- *
- * let public_name = function
- *   | External pkg -> Some (FP.name pkg)
- *   | Internal (_, lib) -> Option.map lib.public ~f:(fun p -> p.name)
- *
- * let unique_id = function
- *   | External pkg -> FP.name pkg
- *   | Internal (dir, lib) ->
- *     match lib.public with
- *     | Some p -> p.name
- *     | None -> Path.to_string dir ^ "\000" ^ lib.name
- *
- * type local =
- *   { src: Path.t
- *   ; name: string
- *   }
- *
- * let local = function
- *   | Internal (dir, lib) -> Some { src = dir; name = lib.name }
- *   | External _ -> None
- *
- * let exists_name t ~f =
- *   match t with
- *   | External pkg -> f (FP.name pkg)
- *   | Internal (_, lib) ->
- *     (f lib.name) || (
- *       match lib.public with
- *       | None -> false
- *       | Some p -> f p.name
- *     ) *)
 
 (* +-----------------------------------------------------------------+
    | Error reporting                                                 |
