@@ -278,9 +278,6 @@ module List = struct
       | Some p -> p :: l)
 end
 
-let jsoo_archives t =
-  List.map t.archives.byte ~f:(Path.extend_basename ~suffix:".js")
-
 (* +-----------------------------------------------------------------+
    | Library name resolution and transitive closure                  |
    +-----------------------------------------------------------------+ *)

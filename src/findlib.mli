@@ -47,8 +47,6 @@ val all_packages  : t -> Package.t list
 (** List all the packages that are not available in this database *)
 val all_unavailable_packages : t -> (string * Unavailable_reason.t) list
 
-val stdlib_with_archives : t -> Package.t
-
 module Config : sig
   type t
   val load : Path.t -> toolchain:string -> context:string -> t

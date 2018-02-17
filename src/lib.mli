@@ -47,8 +47,6 @@ module List : sig
   val jsoo_runtime_files : t -> Path.t list
 end
 
-val jsoo_archives : t -> Path.t list
-
 (** {1 Errors} *)
 
 module Error : sig
