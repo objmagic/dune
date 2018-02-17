@@ -163,7 +163,6 @@ type t =
   ; requires         : t list or_error
   ; ppx_runtime_deps : t list or_error
   ; resolved_selects : Resolved_select.t list
-  ; db               : db
   }
 
 and db =
@@ -391,7 +390,6 @@ let rec make db name (info : Info.t) ~unique_id ~stack =
   ; requires         = requires
   ; ppx_runtime_deps = ppx_runtime_deps
   ; resolved_selects = resolved_selects
-  ; db               = db
   }
 
 and find db name =
