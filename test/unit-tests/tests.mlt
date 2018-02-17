@@ -27,7 +27,7 @@ let findlib =
 val findlib : Jbuilder.Findlib.t = <abstr>
 |}]
 
-let pkg = Findlib.find_exn findlib ~required_by:[] "foo";;
+let pkg = Findlib.find findlib "foo";;
 
 [%%expect{|
 val pkg : Jbuilder.Findlib.Package.t = <package:foo>

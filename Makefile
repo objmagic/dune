@@ -3,8 +3,7 @@ BIN := ./_build/default/bin/main.exe
 
 -include Makefile.dev
 
-x:
-	jbuilder runtest --dev
+x: test
 
 default: boot.exe
 	./boot.exe --dev

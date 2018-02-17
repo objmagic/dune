@@ -46,7 +46,12 @@ module Info = struct
     let name, other_names =
       match conf.public with
       | None -> (conf.name, [])
-      | Some p -> (p.name, [conf.name])
+      | Some p ->
+        (p.name,
+         if p.name = conf.name then
+           []
+         else
+           [conf.name])
     in
     let archive_file ext = Path.relative dir (conf.name ^ ext) in
     let archive_files ~f_ext =
