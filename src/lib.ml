@@ -40,6 +40,7 @@ module Info = struct
     ; synopsis         : string option
     ; archives         : Path.t list Mode.Dict.t
     ; plugins          : Path.t list Mode.Dict.t
+    ; foreign_archives : Path.t list Mode.Dict.t
     ; stubs            : Path.t option
     ; jsoo_runtime     : Path.t list
     ; requires         : Deps.t
@@ -68,6 +69,12 @@ module Info = struct
       | None   -> Status.Private conf.scope_name
       | Some _ -> Public
     in
+    let foreign_archives =
+      { Mode.Dict.
+        byte   = []
+      ; native = [Path.relative dir conf.name]
+      }
+    in
     { loc = conf.buildable.loc
     ; kind     = conf.kind
     ; src_dir  = dir
@@ -77,6 +84,7 @@ module Info = struct
     ; archives = archive_files ~f_ext:Mode.compiled_lib_ext
     ; plugins  = archive_files ~f_ext:Mode.plugin_ext
     ; optional = conf.optional
+    ; foreign_archives
     ; stubs
     ; jsoo_runtime
     ; status
@@ -102,6 +110,8 @@ module Info = struct
     ; pps              = []
     ; optional         = false
     ; status           = Installed
+    ; (* We don't know how these are named for external libraries *)
+      foreign_archives = Mode.Dict.make_both []
     }
 end
 
@@ -151,6 +161,7 @@ type t =
   ; synopsis         : string option
   ; archives         : Path.t list Mode.Dict.t
   ; plugins          : Path.t list Mode.Dict.t
+  ; foreign_archives : Path.t list Mode.Dict.t
   ; stubs            : Path.t option
   ; jsoo_runtime     : Path.t list
   ; requires         : t list or_error
@@ -265,14 +276,10 @@ module L = struct
 
   let archive_files ts ~mode ~ext_lib =
     List.concat_map ts ~f:(fun t ->
-      let l = Mode.Dict.get t.archives mode in
       let l =
-        (* Guarded by [is_local t] because we don't know how these
-           files are named for external libraries *)
-        if mode = Native && is_local t then
-          Path.relative t.src_dir (t.name ^ ext_lib) :: l
-        else
-          l
+        Mode.Dict.get t.archives mode @
+        List.map (Mode.Dict.get t.foreign_archives mode)
+          ~f:(Path.extend_basename ~suffix:ext_lib)
       in
       match t.stubs with
       | None -> l
@@ -383,6 +390,7 @@ let rec make db name (info : Info.t) ~unique_id ~stack =
   ; synopsis         = info.synopsis
   ; archives         = info.archives
   ; plugins          = info.plugins
+  ; foreign_archives = info.foreign_archives
   ; stubs            = info.stubs
   ; jsoo_runtime     = info.jsoo_runtime
   ; requires         = requires
