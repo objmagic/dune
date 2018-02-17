@@ -17,12 +17,14 @@ val libs : t -> Lib.DB.t
 
   type t
 
+  (** Return the new scope database as well as the public libraries
+      database *)
   val create
     :  scopes:Jbuild.Scope_info.t list
     -> context:string
     -> installed_libs:Lib.DB.t
     -> (Path.t * Jbuild.Library.t) list
-    -> t
+    -> t * Lib.DB.t
 
   val find_by_dir  : t -> Path.t        -> scope
   val find_by_name : t -> string option -> scope

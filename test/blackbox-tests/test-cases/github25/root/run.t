@@ -13,7 +13,7 @@ We need ocamlfind to run this test
       ocamlopt hello.{a,cmxa}
       ocamlopt hello.cmxs
 
-  $ $JBUILDER build -j1 @install --display short --root . --only pas-de-bol
+  $ $JBUILDER build -j1 @install --display short --root . --only pas-de-bol 2>&1 | sed 's/" in .*/" in .../'
   Error: External library "une-lib-qui-nexiste-pas" not found.
   -> required by library "plop.ca-marche-pas"
   -> required by jbuild

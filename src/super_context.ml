@@ -85,7 +85,7 @@ let create
         | Library lib -> Some (ctx_dir, lib)
         | _ -> None))
   in
-  let scopes =
+  let scopes, public_libs =
     let scopes =
       List.map scopes ~f:(fun (scope : Scope_info.t) ->
         { scope with root = Path.append context.build_dir scope.root })
@@ -95,26 +95,6 @@ let create
       ~context:context.name
       ~installed_libs
       internal_libs
-  in
-  let public_libs =
-    let public_libs =
-      List.filter_map internal_libs ~f:(fun (_dir, lib) ->
-        match lib.Library.public with
-        | None -> None
-        | Some p -> Some (p.name, lib.scope_name))
-      |> String_map.of_alist_exn
-    in
-    Lib.DB.create ()
-      ~parent:installed_libs
-      ~resolve:(fun name ->
-        match String_map.find name public_libs with
-        | None -> Error Not_found
-        | Some scope_name ->
-          let scope = Scope.DB.find_by_name scopes scope_name in
-          match Lib.DB.find (Scope.libs scope) name with
-          | Error _ as res -> res
-          | Ok t -> Ok (Proxy t))
-      ~all:(fun () -> String_map.keys public_libs)
   in
   let stanzas =
     List.map stanzas
