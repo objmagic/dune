@@ -122,12 +122,12 @@ let setup_separate_compilation_rules sctx components =
       match Lib.DB.find (SC.installed_libs sctx) pkg with
       | Error _ -> ()
       | Ok pkg ->
-        let archives = jsoo_archives pkg in
+        let archives = (Lib.archives pkg).byte in
         let archives =
           (* Special case for the stdlib because it is not referenced
              in the META *)
           match Lib.name pkg with
-          | "stdlib" -> Path.relative ctx.stdlib_dir "stdlib.cma.js" :: archives
+          | "stdlib" -> Path.relative ctx.stdlib_dir "stdlib.cma" :: archives
           | _ -> archives
         in
         List.iter archives ~f:(fun fn ->
