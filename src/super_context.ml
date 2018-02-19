@@ -772,7 +772,8 @@ module PP = struct
       in
       (driver,
        Result.bind resolved_pps ~f:Lib.closure
-       |> Libs.requires_to_build ~required_by:[Preprocess (pps :> string list)])
+       |> Libs.requires_to_build
+            ~required_by:[Preprocess (pps : Jbuild.Pp.t list :> string list)])
     in
     let libs =
       Build.record_lib_deps ~kind:dep_kind (List.map pps ~f:Lib_dep.of_pp)
